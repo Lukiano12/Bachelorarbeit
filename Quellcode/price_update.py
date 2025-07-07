@@ -18,7 +18,6 @@ def get_price_automotive_connectors(article_number):
         if not product_boxes:
             return "Keine Produkte gefunden."
 
-        results = []
         for box in product_boxes:
             title_tag = box.find("a", class_="product-name")
             title = title_tag.text.strip() if title_tag else "Kein Titel"
@@ -37,10 +36,10 @@ def get_price_automotive_connectors(article_number):
                             prices.append(f"{qty}: {price}")
                 else:
                     prices.append("Kein Preis gefunden")
+                return f"{title} → {' | '.join(prices)}"
 
-                results.append(f"{title} → {' | '.join(prices)}")
+        return "Kein passendes Produkt mit dieser Artikelnummer gefunden."
 
-        return "\n".join(results) if results else "Kein passendes Produkt mit dieser Artikelnummer gefunden."
     except Exception as e:
         return f"Fehler: {e}"
 
@@ -50,23 +49,22 @@ def lade_excel_datei():
         return
 
     try:
-        # Lade Datei, aber setze Header auf Zeile 6 (Index 5)
         df = pd.read_excel(dateipfad, header=6)
         df.columns = df.columns.str.strip()  # Whitespace entfernen
 
-        artikel_spalte = next((col for col in df.columns if "Orderno" in col or "article" in col.lower()), None)
-
-        if not artikel_spalte:
-            messagebox.showerror("Fehler", f"Spalte mit Artikelnummer nicht gefunden!\nVerfügbare Spalten: {list(df.columns)}")
+        zielspalte = "Manufacturer-\nOrderno. 1"
+        if zielspalte not in df.columns:
+            messagebox.showerror("Fehler", f"Spalte '{zielspalte}' nicht gefunden!\nVerfügbare Spalten: {list(df.columns)}")
             return
 
-        artikelnummern = df[artikel_spalte].dropna().astype(str)
+        artikelnummern = df[zielspalte].dropna().astype(str).unique()
 
         output.delete(1.0, tk.END)
         output.insert(tk.END, f"Datei geladen: {dateipfad}\nGefundene Artikelnummern: {len(artikelnummern)}\n\n")
 
-        for nr in artikelnummern:
-            output.insert(tk.END, f"→ {nr}\n")
+        for index, nr in enumerate(artikelnummern, 1):
+            output.insert(tk.END, f"{index}. Artikel: {nr}\n")
+            output.update()
             ergebnis = get_price_automotive_connectors(nr)
             output.insert(tk.END, ergebnis + "\n\n")
             output.update()
