@@ -6,208 +6,235 @@ from bs4 import BeautifulSoup
 from openpyxl import load_workbook
 
 # ───────── KONFIG ─────────
-SHEET_NAME  = "DB_4erDS"
-HEADER_ROW  = 5
-MOUSER_API_KEY = ""                # ← hier API-Key einsetzen
+SHEET_NAME     = "DB_4erDS"
+HEADER_ROW     = 5
+MOUSER_API_KEY = ""  # ← Hier ggf. Mouser‑API‑Key eintragen, wenn genutzt
 
 STATIC_COLS = [
     "Unnamed: 0", "Bauteilname", "WN_SAP-Artikel-NR", "Klasse",
     "Datenbankklasse\ndeutsch", "Datenbankbeschreibung \ndeutsch 2",
     "Beschreibung", "Kategorie", "WN_Hersteller", "WN_Hersteller\nBestellnr."
 ]
-SAP_COL = "WN_SAP-Artikel-NR"
-HBN_COL = "WN_Hersteller\nBestellnr."
+SAP_COL, HBN_COL = "WN_SAP-Artikel-NR", "WN_Hersteller\nBestellnr."
+PRICE_COLS     = ("Datum", "Preis", "Losgroesse", "Quelle")
+VISIBLE_COLS   = (*STATIC_COLS, *PRICE_COLS)
 
-PRICE_COLS   = ("Datum", "Preis", "Losgroesse", "Quelle")
-VISIBLE_COLS = (*STATIC_COLS, *PRICE_COLS)
+# ───────── Hilfs‑Formatter ─────────
+def fmt(v):
+    if pd.isna(v) or v in ("", "nan"):
+        return ""
+    if isinstance(v, (pd.Timestamp, datetime)):
+        return "" if v.year == 1900 else v.strftime("%d.%m.%Y")
+    if isinstance(v, float):
+        return str(int(v)) if v.is_integer() else f"{v:,.2f} €"\
+            .replace(",", "X").replace(".", ",").replace("X", ".")
+    return str(v)
 
-# ───────── Hilfs-Formatter ─────────
-def fmt(val):
-    if pd.isna(val) or val in ("", "nan"):          return ""
-    if isinstance(val, (pd.Timestamp, datetime)):   return "" if val.year == 1900 else val.strftime("%d.%m.%Y")
-    if isinstance(val, float):                      return str(int(val)) if val.is_integer() else f"{val:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
-    return str(val)
-
-# ───────── Datenbank laden (alter, fester Ansatz; funktioniert) ─────────
+# ───────── Datenbank laden ─────────
 def load_db(path: pathlib.Path) -> pd.DataFrame:
-    xl     = pd.ExcelFile(path)
-    sheet  = SHEET_NAME if SHEET_NAME in xl.sheet_names else xl.sheet_names[0]
-    raw    = pd.read_excel(path, sheet_name=sheet, header=HEADER_ROW)
-    raw    = raw.reindex(columns=STATIC_COLS + list(raw.columns[len(STATIC_COLS):]))
+    xl    = pd.ExcelFile(path)
+    sheet = SHEET_NAME if SHEET_NAME in xl.sheet_names else xl.sheet_names[0]
+    raw   = pd.read_excel(path, sheet_name=sheet, header=HEADER_ROW)
+    raw   = raw.reindex(columns=STATIC_COLS + list(raw.columns[len(STATIC_COLS):]))
 
     static, price = raw.iloc[:, :len(STATIC_COLS)], raw.iloc[:, len(STATIC_COLS):]
     blocks = []
     for i in range(0, price.shape[1], 4):
         sub = price.iloc[:, i:i+4]
-        if sub.shape[1] < 4: break
+        if sub.shape[1] < 4:
+            break
         sub.columns = PRICE_COLS
         blocks.append(sub)
 
-    tidy = pd.concat([pd.concat([static]*len(blocks), ignore_index=True),
-                      pd.concat(blocks,            ignore_index=True)], axis=1)\
-            .dropna(subset=["Preis", "Datum"], how="all")
+    tidy = pd.concat([
+        pd.concat([static]*len(blocks), ignore_index=True),
+        pd.concat(blocks,           ignore_index=True)
+    ], axis=1).dropna(subset=["Preis","Datum"], how="all")
 
     tidy["Datum"] = pd.to_datetime(tidy["Datum"], errors="coerce")
-    tidy["Preis"] = (tidy["Preis"].astype(str)
-                     .str.replace(",", ".").str.extract(r"([\d\.]+)")[0]
-                     .astype(float, errors="ignore"))
+    # Datenbankpreise bleiben numerisch, nur Online-Preise werden als String eingefügt
+    tidy["Preis"] = (
+        tidy["Preis"].astype(str)
+             .str.replace(",", ".")
+             .str.extract(r"([\d\.]+)")[0]
+             .astype(float, errors="ignore")
+    )
     return tidy.reset_index(drop=True)
 
-# ───────── Online-Preise ─────────
+# ───────── Automotive‑Connectors (Einzelstück + roher Preis‑String) ─────────
 def ac_price(article: str):
-    """liest den *letzten* (größten) Mengen-Preis von automotive-connectors.com"""
-    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        # ─ 1. Suchtrefferseite ───────────────────────────────────────────
-        search_url = f"https://www.automotive-connectors.com/en/search?search={article}"
-        soup = BeautifulSoup(requests.get(search_url, headers=headers, timeout=10).text,
-                             "html.parser")
+        headers = {"User-Agent": "Mozilla/5.0"}
+        url     = f"https://www.automotive-connectors.com/en/search?search={article}"
+        soup    = BeautifulSoup(requests.get(url, headers=headers, timeout=10).text,
+                                "html.parser")
+
         box = soup.find("div", class_="product-box")
         if not box:
             return None
-        title = box.find("a", class_="product-name").text.strip()
-        link  = box.find("a", class_="product-name")["href"]
-        if not link.startswith("http"):
-            link = "https://www.automotive-connectors.com" + link
 
-        # versuche evtl. bereits vorhandene Tabelle (z. B. bei schnellen Seiten)
+        title = box.find("a", class_="product-name").get_text(strip=True)
+
+        # Preistabelle (Trefferliste oder Detailseite)
         rows = box.select("tr.product-block-prices-row")
-
-        # ─ 2. Wenn nichts gefunden → Produktdetailseite aufrufen ─────────
         if not rows:
-            prod_soup = BeautifulSoup(requests.get(link, headers=headers, timeout=10).text,
-                                      "html.parser")
-            rows = prod_soup.select("table.product-block-prices-grid tr.product-block-prices-row")
+            link = box.find("a", class_="product-name")["href"]
+            if not link.startswith("http"):
+                link = "https://www.automotive-connectors.com" + link
+            detail_html = requests.get(link, headers=headers, timeout=10).text
+            rows = BeautifulSoup(detail_html, "html.parser")\
+                      .select("tr.product-block-prices-row")
             if not rows:
                 return None
 
+        # Immer den letzten Break (größte Losgröße) nehmen
         last = rows[-1]
-        qty  = last.select_one(".product-block-prices-quantity")
-        qty  = qty.text.strip() if qty else ""
-        price_txt = last.find("td").get_text(" ", strip=True)
-        price_num = re.search(r"[\d\.,]+", price_txt)
-        if not price_num:
-            return None
-        price_val = float(price_num.group().replace(".", "").replace(",", "."))
 
+        # Menge extrahieren
+        qty_txt = last.select_one(".product-block-prices-quantity").get_text(strip=True)
+        qty     = re.sub(r"[^\d]", "", qty_txt) or ""
+
+        # Preis‑String komplett übernehmen (inkl. "€0.07*/pcs.")
+        price_cell = last.find_all("td", class_="product-block-prices-cell")[-1]
+        price_txt  = price_cell.get_text(" ", strip=True)
+
+        # Baustein-Dikt
         blank = {c: "" for c in STATIC_COLS}
-        return {**blank, "Bauteilname": title, HBN_COL: article,
-                "Datum": date.today(), "Losgroesse": qty,
-                "Preis": price_val, "Quelle": "Automotive-Conn."}
+        return {
+            **blank,
+            "Bauteilname": title,
+            HBN_COL      : article,
+            "Datum"      : date.today(),
+            "Losgroesse" : qty,
+            "Preis"      : price_txt,
+            "Quelle"     : "Automotive‑Conn."
+        }
     except Exception:
         return None
 
+# ───────── Mouser – unverändert (numerisch) ─────────
 def mouser_price(article: str):
     if not MOUSER_API_KEY:
         return None
-    payload = {"SearchByPartRequest":{"mouserPartNumber":article,"partSearchOptions":"None"}}
+    payload = {"SearchByPartRequest": {
+        "mouserPartNumber": article,
+        "partSearchOptions": "None"
+    }}
     try:
-        r = requests.post(
+        r     = requests.post(
             f"https://api.mouser.com/api/v1/search/partnumber?apiKey={MOUSER_API_KEY}",
-            json=payload, headers={"Content-Type":"application/json"}, timeout=10)
-        part        = r.json()["SearchResults"]["Parts"][0]
-        qty, price  = part["PriceBreaks"][-1]["Quantity"], part["PriceBreaks"][-1]["Price"]
-        price_val   = float(price.replace("€", "").replace(",", "."))
-        blank = {c:"" for c in STATIC_COLS}
-        return {**blank, "Bauteilname": part["ManufacturerPartNumber"],
-                HBN_COL: article, "Datum": date.today(),
-                "Losgroesse": qty, "Preis": price_val, "Quelle": "Mouser"}
+            json=payload, headers={"Content-Type":"application/json"}, timeout=10
+        )
+        parts = r.json().get("SearchResults", {}).get("Parts", [])
+        if not parts:
+            return None
+        part = parts[0]
+        brk  = part["PriceBreaks"][-1]
+        qty  = brk["Quantity"]
+        raw  = brk["Price"]
+        price_val = float(re.sub(r"[^\d,\.]", "", raw).replace(",", "."))
+
+        blank = {c: "" for c in STATIC_COLS}
+        return {
+            **blank,
+            "Bauteilname": part["ManufacturerPartNumber"],
+            HBN_COL      : article,
+            "Datum"      : date.today(),
+            "Losgroesse" : qty,
+            "Preis"      : price_val,
+            "Quelle"     : "Mouser"
+        }
     except Exception:
         return None
 
-def online_rows(a): return [r for r in (ac_price(a), mouser_price(a)) if r]
+# ───────── GUI‑Funktionen ─────────
+rows_cache, last_part = [], ""
 
-# ───────── Matrix-Update  (unverändert) ─────────
-def append_prices_to_workbook(wb_path, part, rows):
-    if not rows:
-        messagebox.showinfo("Info", "Keine Live-Preise geladen."); return
-    wb, ws = load_workbook(wb_path, keep_vba=True), None
-    if SHEET_NAME not in wb.sheetnames:
-        messagebox.showerror("Fehler", f"Blatt '{SHEET_NAME}' fehlt."); return
-    ws = wb[SHEET_NAME]
+def do_search():
+    art = entry.get().strip()
+    if not art:
+        return
+    tree.delete(*tree.get_children())
+    sel = source_var.get()
+    global rows_cache, last_part
+    rows_cache = []
 
-    last_col, new_col = ws.max_column, ws.max_column + 1
-    for o in range(4):
-        ws.cell(row=HEADER_ROW+1, column=new_col+o)._style = \
-        ws.cell(row=HEADER_ROW+1, column=last_col-3+o)._style
+    # Datenbank
+    if sel in ("Alle", "Datenbank"):
+        sap = db_df[SAP_COL].astype(str).str.replace(r"\.0$","",regex=True).str.strip()
+        hbn = db_df[HBN_COL].astype(str).str.strip().str.lower()
+        rows_cache += db_df[(sap == art) | (hbn == art.lower())].to_dict("records")
 
-    cnt = 0
-    for r in rows:
-        tgt = None
-        for row in ws.iter_rows(min_row=HEADER_ROW+1, max_col=len(STATIC_COLS)):
-            sap = str(row[STATIC_COLS.index(SAP_COL)].value).replace(".0","").strip()
-            hbn = str(row[STATIC_COLS.index(HBN_COL)].value).strip().lower()
-            if part == sap or part.lower() == hbn:
-                tgt = row[0].row; break
-        if tgt is None: continue
-        ws.cell(row=HEADER_ROW+1, column=new_col).value = r["Datum"].strftime("%d.%m.%Y")
-        ws.cell(row=tgt+1, column=new_col).value = fmt(r["Preis"])
-        ws.cell(row=tgt+2, column=new_col).value = r["Losgroesse"]
-        ws.cell(row=tgt+3, column=new_col).value = r["Quelle"]
-        new_col += 4; cnt += 1
-    wb.save(wb_path)
-    messagebox.showinfo("Matrix", f"{cnt} Live-Preis(e) angehängt.")
+    # Automotive‑Connectors
+    if sel in ("Alle", "Automotive‑Connectors"):
+        r = ac_price(art)
+        if r:
+            rows_cache.append(r)
 
-# ───────── GUI ─────────
+    # Mouser
+    if sel in ("Alle", "Mouser"):
+        r = mouser_price(art)
+        if r:
+            rows_cache.append(r)
+
+    last_part = art
+    for r in rows_cache:
+        tree.insert("", tk.END,
+                    values=[fmt(r.get(c, "")) for c in VISIBLE_COLS])
+    if not rows_cache:
+        messagebox.showinfo("Info", "Keine Treffer gefunden.")
+
+def export_tbl():
+    if not rows_cache:
+        messagebox.showwarning("Leere Tabelle", "Nichts zu exportieren.")
+        return
+    fname = filedialog.asksaveasfilename(
+        defaultextension=".xlsx", filetypes=[("Excel","*.xlsx")]
+    )
+    if not fname:
+        return
+    pd.DataFrame(rows_cache, columns=VISIBLE_COLS).to_excel(fname, index=False)
+    wb = load_workbook(fname)
+    wb.active.auto_filter.ref = f"A1:{chr(64+len(VISIBLE_COLS))}1"
+    wb.save(fname)
+    messagebox.showinfo("Export", "Datei gespeichert.")
+
+# ───────── GUI Aufbau ─────────
 root = tk.Tk(); root.withdraw()
-file = filedialog.askopenfilename(title="Excel-Datenbank wählen", filetypes=[("Excel","*.xls*")])
-if not file: exit()
-db_path = pathlib.Path(file)
-try:
-    db_df = load_db(db_path)
-except Exception as e:
-    messagebox.showerror("Fehler", str(e)); exit()
+db_file = filedialog.askopenfilename(
+    title="Excel‑Datenbank wählen", filetypes=[("Excel","*.xls*")]
+)
+if not db_file:
+    exit()
+db_df = load_db(pathlib.Path(db_file))
 
-root.deiconify(); root.title("Preis-DB + Online-Preise"); root.geometry("1400x700")
+root.deiconify()
+root.title("Preis‑DB + Online‑Preise")
+root.geometry("1450x730")
+
 top = tk.Frame(root); top.pack(padx=10, pady=5, fill="x")
-tk.Label(top, text="Artikelnummer (SAP / Hersteller):").pack(side="left", padx=5)
-entry = tk.Entry(top, width=35); entry.pack(side="left", padx=5)
+tk.Label(top, text="Artikelnummer:").pack(side="left")
+entry = tk.Entry(top, width=36); entry.pack(side="left", padx=6)
+
+source_var = tk.StringVar(value="Alle")
+ttk.Combobox(
+    top, textvariable=source_var,
+    values=["Alle","Datenbank","Automotive‑Connectors","Mouser"],
+    state="readonly", width=25
+).pack(side="left", padx=6)
+
+tk.Button(top, text="Suche",  width=10, command=do_search  ).pack(side="left",  padx=6)
+tk.Button(top, text="Export", width=8,  command=export_tbl).pack(side="right", padx=6)
 
 tree = ttk.Treeview(root, columns=VISIBLE_COLS, show="headings", height=28)
 for c in VISIBLE_COLS:
+    w = 150 if c not in ("Beschreibung","Datenbankbeschreibung \ndeutsch 2") else 260
+    tree.column(c, width=w, anchor="center")
     tree.heading(c, text=c)
-    tree.column(c, width=140 if c not in ("Beschreibung","Datenbankbeschreibung \ndeutsch 2") else 260, anchor="center")
-tree.pack(fill="both", expand=True, padx=8, pady=(8,0))
+tree.pack(fill="both", expand=True, padx=10, pady=(4,0))
+
 hbar = ttk.Scrollbar(root, orient="horizontal", command=tree.xview)
-tree.configure(xscrollcommand=hbar.set); hbar.pack(fill="x", padx=8, pady=(0,8))
-
-last_part, live_rows = "", []
-
-def do_search():
-    global last_part, live_rows
-    art = entry.get().strip()
-    if not art: return
-    tree.delete(*tree.get_children())
-
-    sap = db_df[SAP_COL].astype(str).str.replace(r"\.0$","",regex=True).str.strip()
-    hbn = db_df[HBN_COL].astype(str).str.strip().str.lower()
-    db_rows = db_df[(sap == art) | (hbn == art.lower())].to_dict("records")
-
-    part      = db_rows[0][HBN_COL] if db_rows else art
-    live_rows = online_rows(part)
-    template  = db_rows[0] if db_rows else {c:"" for c in STATIC_COLS}
-    live_rows = [{**template, **lr} for lr in live_rows]
-    last_part = part
-
-    for r in db_rows + live_rows:
-        tree.insert("", "end", values=[fmt(r.get(c,"")) for c in VISIBLE_COLS])
-    if not tree.get_children():
-        messagebox.showinfo("Info","Keine Daten gefunden.")
-
-def export():
-    if not tree.get_children():
-        messagebox.showwarning("Keine Daten","Nichts zu exportieren."); return
-    fname = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel","*.xlsx")])
-    if not fname: return
-    rows = [tree.item(i)["values"] for i in tree.get_children()]
-    pd.DataFrame(rows, columns=VISIBLE_COLS).to_excel(fname, index=False)
-    wb = load_workbook(fname); wb.active.auto_filter.ref = f"A1:{chr(64+len(VISIBLE_COLS))}1"; wb.save(fname)
-    messagebox.showinfo("Export", "Datei gespeichert.")
-
-tk.Button(top, text="Suche",                command=do_search).pack(side="left",  padx=5)
-tk.Button(top, text="Export Tabelle",       command=export   ).pack(side="right", padx=5)
-tk.Button(top, text="DB-Matrix aktualisieren",
-          command=lambda: append_prices_to_workbook(db_path, last_part, live_rows))\
-    .pack(side="right", padx=5)
+tree.configure(xscrollcommand=hbar.set)
+hbar.pack(fill="x", padx=10)
 
 root.mainloop()
