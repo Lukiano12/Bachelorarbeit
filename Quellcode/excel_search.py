@@ -7,7 +7,7 @@ def load_excel(file):
     cols_to_drop = [
         "Unnamed: 0", "Unnamed: 17", "Unnamed: 18", "Unnamed: 19",
         "Unnamed: 20", "Unnamed: 21", "Unnamed: 22",
-        "WN_PinClass", "WN_PolCount_NUM", "WN_Color"
+        "WN_PinClass", "WN_PolCount_NUM", "WN_Color", "WN_Min_CrossSection", "WN_Max_CrossSection" 
     ]
     if "WN_SAP-Artikel-NR" in df.columns:
         df["WN_SAP-Artikel-NR"] = df["WN_SAP-Artikel-NR"].apply(sapnr_to_str)
