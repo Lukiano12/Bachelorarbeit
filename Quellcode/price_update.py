@@ -1,15 +1,13 @@
 import pandas as pd
 import tkinter as tk
-from tkinter import ttk, filedialog, simpledialog, messagebox
+from tkinter import ttk, filedialog, messagebox
 from datetime import date
 import requests, re
 from bs4 import BeautifulSoup
 
-# Mouser API Key hier eintragen, falls vorhanden!
 MOUSER_API_KEY = ""
 
 def format_value(value, field=None):
-    # Datum formatieren
     if field and "Datum" in field and pd.notna(value) and str(value).strip() != "":
         try:
             date_val = pd.to_datetime(value, errors="coerce")
@@ -19,7 +17,6 @@ def format_value(value, field=None):
                 return str(value)
         except Exception:
             return str(value)
-    # Preis formatieren
     if field and "Preis" in field and pd.notna(value):
         try:
             val = re.sub(r"[^\d.,]", "", str(value)).replace(",", ".")
@@ -27,7 +24,6 @@ def format_value(value, field=None):
             return "{:.2f} €".format(price).replace(".", ",")
         except Exception:
             pass
-    # Sonst Standard
     return "" if pd.isna(value) else str(value)
 
 def sapnr_to_str(x):
@@ -144,14 +140,9 @@ def merge_results(db_rows, online_results_list):
             return None
 
     df = db_rows.copy()
-
-    # Formatierung nach Zeilennummer (0 = Datum, 1 = Preis)
     for col in df.columns:
-        # Zeile 0: Datum
         df.iloc[0, df.columns.get_loc(col)] = format_value(df.iloc[0, df.columns.get_loc(col)], "Datum")
-        # Zeile 1: Preis
         df.iloc[1, df.columns.get_loc(col)] = format_value(df.iloc[1, df.columns.get_loc(col)], "Preis")
-
     for res in online_results_list:
         if res:
             colname = res.get("Quelle", "Online")
@@ -163,44 +154,52 @@ def merge_results(db_rows, online_results_list):
             ]
     return df
 
-def show_table(df):
-    df = df.replace({pd.NA: '', None: ''}).fillna('')
+def show_table(df, tree):
+    # Ersetze alle nan/None durch leere Strings
+    df = df.replace({pd.NA: '', None: '', 'nan': ''}).fillna('')
+
+    # Zeige nur Spalten, in denen mindestens ein Wert steht (wie früher)
     df = df.loc[:, (df != '').any(axis=0)]
-    root = tk.Tk()
-    root.title("Suchergebnis")
-    frame = tk.Frame(root)
-    frame.pack(fill="both", expand=True)
-    tree = ttk.Treeview(frame, columns=list(df.columns), show="headings")
+
+    # Lösche alte Inhalte
+    for col in tree["columns"]:
+        tree.heading(col, text="")
+        tree.column(col, width=0)
+    tree.delete(*tree.get_children())
+
+    # Neue Spalten setzen
+    tree["columns"] = list(df.columns)
     for col in df.columns:
         tree.heading(col, text=str(col))
         tree.column(col, width=120, anchor="center")
+
     for _, row in df.iterrows():
-        tree.insert("", tk.END, values=list(row))
-    tree.pack(fill="both", expand=True)
-    root.mainloop()
+        # Alle Werte als str (sonst gibts manchmal Fehler)
+        values = [str(x) if x is not None else '' for x in row]
+        tree.insert("", tk.END, values=values)
 
 def main():
     root = tk.Tk()
-    root.withdraw()
+    root.title("Preis-DB & Online-Preise")
+    root.geometry("1200x400")
+
     file = filedialog.askopenfilename(
         title="Excel-Datei wählen", filetypes=[("Excel-Dateien", "*.xls*")]
     )
     if not file:
         messagebox.showinfo("Abgebrochen", "Keine Datei gewählt.")
+        root.destroy()
         return
 
     sheet = "DB_4erDS"
     df = pd.read_excel(file, sheet_name=sheet, header=6)
-
     cols_to_drop = [
         "Unnamed: 0", "Unnamed: 17", "Unnamed: 18",
         "Unnamed: 19", "Unnamed: 20", "Unnamed: 21", "Unnamed: 22",
         "WN_PinClass", "WN_PolCount_NUM", "WN_Color"
     ]
-
     if "WN_SAP-Artikel-NR" in df.columns:
         df["WN_SAP-Artikel-NR"] = df["WN_SAP-Artikel-NR"].apply(sapnr_to_str)
-
     df = df.drop(columns=[col for col in cols_to_drop if col in df.columns])
     search_cols = ["WN_SAP-Artikel-NR", "WN_HerstellerBestellnummer_1"]
     missing_cols = [col for col in search_cols if col not in df.columns]
@@ -208,14 +207,28 @@ def main():
         messagebox.showerror(
             "Fehler", f"Folgende Spalten fehlen in der Tabelle: {missing_cols}"
         )
+        root.destroy()
         return
 
-    while True:
-        search = simpledialog.askstring(
-            "Suche", "Artikelnummer oder SAP-Nummer eingeben:", parent=root
-        )
+    # GUI Aufbau
+    frame = tk.Frame(root)
+    frame.pack(fill="x", padx=10, pady=4)
+    tk.Label(frame, text="Artikelnummer oder SAP-Nummer:").pack(side="left")
+    entry = tk.Entry(frame, width=35)
+    entry.pack(side="left", padx=5)
+    search_btn = tk.Button(frame, text="Suche", width=12)
+    search_btn.pack(side="left", padx=5)
+
+    result_frame = tk.Frame(root)
+    result_frame.pack(fill="both", expand=True, padx=10, pady=4)
+
+    tree = ttk.Treeview(result_frame, columns=[], show="headings")
+    tree.pack(fill="both", expand=True)
+
+    def do_search(event=None):
+        search = entry.get().strip()
         if not search:
-            break
+            return
         db_rows = search_and_show(df, search, search_cols)
         artikelnummer = None
         if db_rows is not None:
@@ -223,8 +236,6 @@ def main():
                 artikelnummer = db_rows.iloc[0]['WN_HerstellerBestellnummer_1']
         else:
             artikelnummer = search
-
-        # Hole Onlinequellen als Liste (AC + Mouser)
         online_results_list = []
         if artikelnummer and isinstance(artikelnummer, str) and artikelnummer and artikelnummer.lower() != 'nan':
             ac_res = ac_price(artikelnummer)
@@ -235,12 +246,16 @@ def main():
                 online_results_list.append(mouser_res)
         merged = merge_results(db_rows, online_results_list)
         if merged is not None and not merged.empty:
-            show_table(merged)
+            show_table(merged, tree)
         else:
             messagebox.showinfo(
                 "Kein Treffer", f"Keine Zeile mit '{search}' gefunden (weder DB noch online)."
             )
-    root.destroy()
+
+    search_btn.config(command=do_search)
+    entry.bind("<Return>", do_search)
+
+    root.mainloop()
 
 if __name__ == "__main__":
     main()
