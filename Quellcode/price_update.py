@@ -5,8 +5,39 @@ from datetime import date
 import requests, re
 from bs4 import BeautifulSoup
 
-# Trage hier deinen Mouser API Key ein!
+# Mouser API Key hier eintragen, falls vorhanden!
 MOUSER_API_KEY = ""
+
+def format_value(value, field=None):
+    # Datum formatieren
+    if field and "Datum" in field and pd.notna(value) and str(value).strip() != "":
+        try:
+            date_val = pd.to_datetime(value, errors="coerce")
+            if pd.notna(date_val):
+                return date_val.strftime("%d.%m.%Y")
+            else:
+                return str(value)
+        except Exception:
+            return str(value)
+    # Preis formatieren
+    if field and "Preis" in field and pd.notna(value):
+        try:
+            val = re.sub(r"[^\d.,]", "", str(value)).replace(",", ".")
+            price = float(val)
+            return "{:.2f} €".format(price).replace(".", ",")
+        except Exception:
+            pass
+    # Sonst Standard
+    return "" if pd.isna(value) else str(value)
+
+def sapnr_to_str(x):
+    try:
+        if pd.isna(x) or str(x).strip() == "" or str(x).lower() == "nan":
+            return ""
+        val = float(x)
+        return str(int(val))
+    except Exception:
+        return str(x)
 
 def ac_price(article):
     try:
@@ -62,7 +93,7 @@ def mouser_price(article, MOUSER_API_KEY=""):
         raw  = brk["Price"]
         try:
             price_val = float(re.sub(r"[^\d,\.]", "", raw).replace(",", "."))
-            price_txt = f"{price_val:.5f}".replace(".", ",")
+            price_txt = f"{price_val:.2f} €".replace(".", ",")
         except Exception:
             price_txt = raw
         return {
@@ -79,7 +110,7 @@ def search_and_show(df, search, search_cols):
     search_df = df[search_cols].copy()
     if 'WN_SAP-Artikel-NR' in search_cols:
         search_df['WN_SAP-Artikel-NR'] = search_df['WN_SAP-Artikel-NR'].apply(
-            lambda x: str(int(x)) if pd.notnull(x) and str(x) != 'nan' else ""
+            lambda x: str(int(float(x))) if pd.notnull(x) and str(x).replace('.', '', 1).isdigit() else ""
         )
     if 'WN_HerstellerBestellnummer_1' in search_cols:
         search_df['WN_HerstellerBestellnummer_1'] = search_df['WN_HerstellerBestellnummer_1'].astype(str).map(
@@ -94,17 +125,15 @@ def search_and_show(df, search, search_cols):
     return df.iloc[start:end]
 
 def merge_results(db_rows, online_results_list):
-    # online_results_list: Liste von Dicts (eine pro Onlinequelle)
     if db_rows is None or db_rows.empty:
-        # Keine Datenbank-Treffer, aber evtl. Onlinequellen
         if online_results_list:
             data = {}
             for res in online_results_list:
                 if res:
                     colname = res.get("Quelle", "Online")
                     data[colname] = [
-                        res.get("Datum", ""),
-                        res.get("Preis", ""),
+                        format_value(res.get("Datum", ""), "Datum"),
+                        format_value(res.get("Preis", ""), "Preis"),
                         res.get("Losgröße", ""),
                         res.get("Quelle", "")
                     ]
@@ -114,14 +143,21 @@ def merge_results(db_rows, online_results_list):
         else:
             return None
 
-    # Datenbank-Treffer: DataFrame kopieren und Online-Blöcke anhängen
     df = db_rows.copy()
+
+    # Formatierung nach Zeilennummer (0 = Datum, 1 = Preis)
+    for col in df.columns:
+        # Zeile 0: Datum
+        df.iloc[0, df.columns.get_loc(col)] = format_value(df.iloc[0, df.columns.get_loc(col)], "Datum")
+        # Zeile 1: Preis
+        df.iloc[1, df.columns.get_loc(col)] = format_value(df.iloc[1, df.columns.get_loc(col)], "Preis")
+
     for res in online_results_list:
         if res:
             colname = res.get("Quelle", "Online")
             df[colname] = [
-                res.get("Datum", ""),
-                res.get("Preis", ""),
+                format_value(res.get("Datum", ""), "Datum"),
+                format_value(res.get("Preis", ""), "Preis"),
                 res.get("Losgröße", ""),
                 res.get("Quelle", ""),
             ]
@@ -155,10 +191,16 @@ def main():
 
     sheet = "DB_4erDS"
     df = pd.read_excel(file, sheet_name=sheet, header=6)
+
     cols_to_drop = [
         "Unnamed: 0", "Unnamed: 17", "Unnamed: 18",
         "Unnamed: 19", "Unnamed: 20", "Unnamed: 21", "Unnamed: 22",
+        "WN_PinClass", "WN_PolCount_NUM", "WN_Color"
     ]
+
+    if "WN_SAP-Artikel-NR" in df.columns:
+        df["WN_SAP-Artikel-NR"] = df["WN_SAP-Artikel-NR"].apply(sapnr_to_str)
+
     df = df.drop(columns=[col for col in cols_to_drop if col in df.columns])
     search_cols = ["WN_SAP-Artikel-NR", "WN_HerstellerBestellnummer_1"]
     missing_cols = [col for col in search_cols if col not in df.columns]
