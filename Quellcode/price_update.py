@@ -5,6 +5,9 @@ from datetime import date
 import requests, re
 from bs4 import BeautifulSoup
 
+# Trage hier deinen Mouser API Key ein!
+MOUSER_API_KEY = ""
+
 def ac_price(article):
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -36,6 +39,41 @@ def ac_price(article):
     except Exception:
         return None
 
+def mouser_price(article, MOUSER_API_KEY=""):
+    if not MOUSER_API_KEY:
+        return None
+    payload = {
+        "SearchByPartRequest": {
+            "mouserPartNumber": article,
+            "partSearchOptions": "None"
+        }
+    }
+    try:
+        r = requests.post(
+            f"https://api.mouser.com/api/v1/search/partnumber?apiKey={MOUSER_API_KEY}",
+            json=payload, headers={"Content-Type":"application/json"}, timeout=10
+        )
+        parts = r.json().get("SearchResults", {}).get("Parts", [])
+        if not parts:
+            return None
+        part = parts[0]
+        brk  = part["PriceBreaks"][-1]
+        qty  = brk["Quantity"]
+        raw  = brk["Price"]
+        try:
+            price_val = float(re.sub(r"[^\d,\.]", "", raw).replace(",", "."))
+            price_txt = f"{price_val:.5f}".replace(".", ",")
+        except Exception:
+            price_txt = raw
+        return {
+            "Datum": date.today().strftime("%d.%m.%Y"),
+            "Preis": price_txt,
+            "Losgröße": qty,
+            "Quelle": "Mouser"
+        }
+    except Exception:
+        return None
+
 def search_and_show(df, search, search_cols):
     search = str(search).strip()
     search_df = df[search_cols].copy()
@@ -55,38 +93,39 @@ def search_and_show(df, search, search_cols):
     end = min(start + 4, len(df))
     return df.iloc[start:end]
 
-def merge_results(db_rows, online_results):
-    # Keine Treffer
+def merge_results(db_rows, online_results_list):
+    # online_results_list: Liste von Dicts (eine pro Onlinequelle)
     if db_rows is None or db_rows.empty:
-        if online_results:
-            # Nur Onlineblock anzeigen, im DB-Stil: 4 Zeilen, neue Spalte "Online"
-            data = {col: [""]*4 for col in []}
-            data["Online-Quelle"] = [
-                online_results.get("Datum", ""),
-                online_results.get("Preis", ""),
-                online_results.get("Losgröße", ""),
-                online_results.get("Quelle", "")
-            ]
+        # Keine Datenbank-Treffer, aber evtl. Onlinequellen
+        if online_results_list:
+            data = {}
+            for res in online_results_list:
+                if res:
+                    colname = res.get("Quelle", "Online")
+                    data[colname] = [
+                        res.get("Datum", ""),
+                        res.get("Preis", ""),
+                        res.get("Losgröße", ""),
+                        res.get("Quelle", "")
+                    ]
+            if not data:
+                return None
             return pd.DataFrame(data)
         else:
             return None
 
-    # Datenbank-Treffer: DataFrame kopieren und Online-Block anhängen
+    # Datenbank-Treffer: DataFrame kopieren und Online-Blöcke anhängen
     df = db_rows.copy()
-    # Name der neuen Spalte:
-    online_col = "Online-Quelle"
-    # 4 Werte einfügen, leere Strings falls kein Online-Ergebnis
-    if online_results:
-        df[online_col] = [
-            online_results.get("Datum", ""),
-            online_results.get("Preis", ""),
-            online_results.get("Losgröße", ""),
-            online_results.get("Quelle", ""),
-        ]
-    else:
-        df[online_col] = [""] * 4
+    for res in online_results_list:
+        if res:
+            colname = res.get("Quelle", "Online")
+            df[colname] = [
+                res.get("Datum", ""),
+                res.get("Preis", ""),
+                res.get("Losgröße", ""),
+                res.get("Quelle", ""),
+            ]
     return df
-
 
 def show_table(df):
     df = df.replace({pd.NA: '', None: ''}).fillna('')
@@ -142,10 +181,17 @@ def main():
                 artikelnummer = db_rows.iloc[0]['WN_HerstellerBestellnummer_1']
         else:
             artikelnummer = search
-        online_results = None
+
+        # Hole Onlinequellen als Liste (AC + Mouser)
+        online_results_list = []
         if artikelnummer and isinstance(artikelnummer, str) and artikelnummer and artikelnummer.lower() != 'nan':
-            online_results = ac_price(artikelnummer)
-        merged = merge_results(db_rows, online_results)
+            ac_res = ac_price(artikelnummer)
+            if ac_res:
+                online_results_list.append(ac_res)
+            mouser_res = mouser_price(artikelnummer, MOUSER_API_KEY)
+            if mouser_res:
+                online_results_list.append(mouser_res)
+        merged = merge_results(db_rows, online_results_list)
         if merged is not None and not merged.empty:
             show_table(merged)
         else:
