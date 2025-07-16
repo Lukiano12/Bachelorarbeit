@@ -56,30 +56,37 @@ def search_and_show(df, search, search_cols):
     return df.iloc[start:end]
 
 def merge_results(db_rows, online_results):
-    # Fall 1: Datenbanktreffer -> hänge Online-Spalten rechts an
-    if db_rows is not None and not db_rows.empty:
-        db_rows = db_rows.copy()
-        db_rows["Online_Datum"] = ""
-        db_rows["Online_Preis"] = ""
-        db_rows["Online_Losgroesse"] = ""
-        db_rows["Online_Quelle"] = ""
-        # Trage die Online-Ergebnisse nur in der ersten DB-Zeile ein (wie Excel bei einem Preisblock)
+    # Keine Treffer
+    if db_rows is None or db_rows.empty:
         if online_results:
-            db_rows.loc[db_rows.index[0], "Online_Datum"] = online_results.get("Datum", "")
-            db_rows.loc[db_rows.index[0], "Online_Preis"] = online_results.get("Preis", "")
-            db_rows.loc[db_rows.index[0], "Online_Losgroesse"] = online_results.get("Losgröße", "")
-            db_rows.loc[db_rows.index[0], "Online_Quelle"] = online_results.get("Quelle", "")
-        return db_rows
-    # Fall 2: Kein Datenbanktreffer, aber Online-Treffer
-    elif online_results:
-        return pd.DataFrame([{
-            "Online_Datum": online_results.get("Datum", ""),
-            "Online_Preis": online_results.get("Preis", ""),
-            "Online_Losgroesse": online_results.get("Losgröße", ""),
-            "Online_Quelle": online_results.get("Quelle", "")
-        }])
+            # Nur Onlineblock anzeigen, im DB-Stil: 4 Zeilen, neue Spalte "Online"
+            data = {col: [""]*4 for col in []}
+            data["Online-Quelle"] = [
+                online_results.get("Datum", ""),
+                online_results.get("Preis", ""),
+                online_results.get("Losgröße", ""),
+                online_results.get("Quelle", "")
+            ]
+            return pd.DataFrame(data)
+        else:
+            return None
+
+    # Datenbank-Treffer: DataFrame kopieren und Online-Block anhängen
+    df = db_rows.copy()
+    # Name der neuen Spalte:
+    online_col = "Online-Quelle"
+    # 4 Werte einfügen, leere Strings falls kein Online-Ergebnis
+    if online_results:
+        df[online_col] = [
+            online_results.get("Datum", ""),
+            online_results.get("Preis", ""),
+            online_results.get("Losgröße", ""),
+            online_results.get("Quelle", ""),
+        ]
     else:
-        return None
+        df[online_col] = [""] * 4
+    return df
+
 
 def show_table(df):
     df = df.replace({pd.NA: '', None: ''}).fillna('')
