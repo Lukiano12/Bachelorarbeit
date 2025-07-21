@@ -29,14 +29,17 @@ def ac_price(article):
         price_search = re.search(r"(\d+[.,]?\d*)", price_txt)
         if price_search:
             price_float = float(price_search.group(1).replace(",", "."))
-            price_fmt = "{:.2f} €".format(price_float).replace(".", ",")
+            discounted_price = price_float * 0.7
+            price_fmt = "{:.2f} €".format(discounted_price).replace(".", ",")
         else:
             price_fmt = price_txt  # Fallback: Original-Text
+
+
         return {
             "Datum": date.today().strftime("%d.%m.%Y"),
             "Preis": price_fmt,
             "Losgröße": qty,
-            "Quelle": "Automotive-Connectors"
+            "Quelle": "Automotive-Connectors (-30%)"
         }
     except Exception:
         return None

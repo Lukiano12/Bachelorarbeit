@@ -26,14 +26,16 @@ def mouser_price(article, MOUSER_API_KEY=MOUSER_API_KEY):
         raw  = brk["Price"]
         try:
             price_val = float(re.sub(r"[^\d,\.]", "", raw).replace(",", "."))
-            price_txt = f"{price_val:.2f} €".replace(".", ",")
+            discounted_price = price_val * 0.7
+            price_txt = f"{discounted_price:.2f} €".replace(".", ",")
         except Exception:
-            price_txt = raw
+             price_txt = raw
+
         return {
             "Datum": date.today().strftime("%d.%m.%Y"),
             "Preis": price_txt,
             "Losgröße": qty,
-            "Quelle": "Mouser"
+            "Quelle": "Mouser (-30%)"
         }
     except Exception:
         return None
