@@ -41,7 +41,7 @@ def save_db_to_json(df, json_path):
 def start_app():
     root = tk.Tk()
     root.title("Preis-DB & Online-Preise")
-    root.geometry("1200x400")
+    root.geometry("1920x1080")
 
     df = None
     search_cols = ["WN_SAP-Artikel-NR", "WN_HerstellerBestellnummer_1"]
@@ -77,6 +77,13 @@ def start_app():
     tree_scroll_x.config(command=tree.xview)
     tree_scroll_x.pack(side="bottom", fill="x")
     tree.pack(fill="both", expand=True)
+
+    # Fortschrittsbalken und Status-Label
+    progress_var = tk.DoubleVar()
+    progress_bar = ttk.Progressbar(root, variable=progress_var, maximum=100)
+    progress_bar.pack(fill="x", padx=10, pady=2)
+    status_label = tk.Label(root, text="Bereit")
+    status_label.pack(fill="x", padx=10, pady=(0, 5))
 
     def initialize_db():
         nonlocal df
@@ -159,7 +166,15 @@ def start_app():
 
         bauteile = bom_df[art_col].dropna().unique()
         gesamt_ergebnisse = []
-        for suchwert in bauteile:
+
+        # Fortschrittsbalken initialisieren
+        total = len(bauteile)
+        progress_var.set(0)
+        progress_bar.update()
+        status_label.config(text=f"Lade BOM: Teile werden verarbeitet ...")
+        root.update_idletasks()
+
+        for idx, suchwert in enumerate(bauteile):
             suchwert = str(suchwert).strip()
             if not suchwert:
                 continue
@@ -173,6 +188,16 @@ def start_app():
             if merged is not None and not merged.empty:
                 merged.insert(0, "Suchwert", suchwert)
                 gesamt_ergebnisse.append(merged)
+            # Fortschritt aktualisieren
+            progress = (idx + 1) / total * 100
+            progress_var.set(progress)
+            status_label.config(text=f"Lade BOM: Teile werden verarbeitet ...")
+            root.update_idletasks()
+
+        progress_var.set(100)
+        status_label.config(text=f"BOM-Laden abgeschlossen.")
+        progress_bar.update()
+        root.update_idletasks()
 
         if not gesamt_ergebnisse:
             messagebox.showinfo("Info", "Keine Ergebnisse für die BOM-Bauteile.")

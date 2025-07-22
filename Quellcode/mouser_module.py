@@ -1,7 +1,7 @@
 from datetime import date
 import requests, re
 
-MOUSER_API_KEY = ""  # Füge hier deinen API-Key ein!
+MOUSER_API_KEY = "8de8bdef-945e-421a-9b7d-ce77d61e1b03"  # Füge hier deinen API-Key ein!
 
 def mouser_price(article, MOUSER_API_KEY=MOUSER_API_KEY):
     if not MOUSER_API_KEY:

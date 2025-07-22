@@ -1,8 +1,7 @@
 from ac_price_module import ac_price
 from mouser_module import mouser_price
-
 from octopart_module import octopart_price_nexar
-# ...
+
 def get_online_results(artikelnummer):
     results = []
     if artikelnummer and isinstance(artikelnummer, str) and artikelnummer and artikelnummer.lower() != 'nan':

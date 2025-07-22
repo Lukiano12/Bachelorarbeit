@@ -1,6 +1,6 @@
 import pandas as pd
 
-def read_bom(bomfile, header=0):
+def read_bom(bomfile, header=6):
     if bomfile.lower().endswith((".xls", ".xlsx")):
         bom_df = pd.read_excel(bomfile, header=header)
     elif bomfile.lower().endswith(".csv"):
