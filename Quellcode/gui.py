@@ -41,7 +41,7 @@ def save_db_to_json(df, json_path):
 def start_app():
     root = tk.Tk()
     root.title("Preis-DB & Online-Preise")
-    root.geometry("1920x1080")
+    root.geometry("1600x900")
 
     df = None
     search_cols = ["WN_SAP-Artikel-NR", "WN_HerstellerBestellnummer_1"]
@@ -186,7 +186,6 @@ def start_app():
             online_results_list = get_online_results(artikelnummer)
             merged = merge_results(db_rows, online_results_list)
             if merged is not None and not merged.empty:
-                merged.insert(0, "Suchwert", suchwert)
                 gesamt_ergebnisse.append(merged)
             # Fortschritt aktualisieren
             progress = (idx + 1) / total * 100
@@ -204,6 +203,9 @@ def start_app():
             return
 
         gesamt_df = pd.concat(gesamt_ergebnisse, ignore_index=True)
+        db_spalten = [col for col in gesamt_df.columns if not ("mouser" in col.lower() or "octopart" in col.lower())]
+        online_spalten = [col for col in gesamt_df.columns if ("mouser" in col.lower() or "octopart" in col.lower())]
+        gesamt_df = gesamt_df[db_spalten + online_spalten]
         show_table(gesamt_df, tree)
         tree.gesamt_df = gesamt_df  # Für Export
 
