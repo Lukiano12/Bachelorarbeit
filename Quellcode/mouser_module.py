@@ -1,7 +1,11 @@
 from datetime import date
 import requests, re
+import os
+from dotenv import load_dotenv
 
-MOUSER_API_KEY = ""  # Füge hier deinen API-Key ein!
+load_dotenv(dotenv_path=os.path.join("venv", ".env"))
+
+MOUSER_API_KEY = os.getenv("MOUSER_API_KEY")
 
 def mouser_price(article, MOUSER_API_KEY=MOUSER_API_KEY):
     if not MOUSER_API_KEY:

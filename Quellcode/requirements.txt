@@ -5,3 +5,4 @@ pandas
 xlrd
 openpyxl
 webdriver-manager
+python-dotenv
