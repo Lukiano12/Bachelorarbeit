@@ -61,6 +61,10 @@ def start_app():
     update_db_btn = tk.Button(frame, text="Datenbank aktualisieren", width=18)
     update_db_btn.pack(side="left", padx=5)
 
+    use_online_var = tk.BooleanVar(value=True)
+    online_check = tk.Checkbutton(frame, text="Online Quellen nutzen",variable=use_online_var )
+    online_check.pack(side="left", padx=10)
+
     result_frame = tk.Frame(root)
     result_frame.pack(fill="both", expand=True, padx=10, pady=4)
 
@@ -133,11 +137,12 @@ def start_app():
         if not search:
             return
         db_rows = search_and_show(df, search, search_cols)
-        if db_rows is not None and 'WN_HerstellerBestellnummer_1' in db_rows.columns:
-            artikelnummer = db_rows.iloc[0]['WN_HerstellerBestellnummer_1']
+        artikelnummer = db_rows.iloc[0]['WN_HerstellerBestellnummer_1'] if (db_rows is not None and 'WN_HerstellerBestellnummer_1' in db_rows.columns) else search
+        # Nur wenn Checkbox aktiviert ist, Online-Quellen abfragen
+        if use_online_var.get():
+            online_results_list = get_online_results(artikelnummer)
         else:
-            artikelnummer = search
-        online_results_list = get_online_results(artikelnummer)
+            online_results_list = []
         merged = merge_results(db_rows, online_results_list)
         if merged is not None and not merged.empty:
             show_table(merged, tree)
@@ -180,11 +185,12 @@ def start_app():
             if not suchwert:
                 continue
             db_rows = search_and_show(df, suchwert, search_cols)
-            if db_rows is not None and 'WN_HerstellerBestellnummer_1' in db_rows.columns:
-                artikelnummer = db_rows.iloc[0]['WN_HerstellerBestellnummer_1']
+            artikelnummer = db_rows.iloc[0]['WN_HerstellerBestellnummer_1'] if (db_rows is not None and 'WN_HerstellerBestellnummer_1' in db_rows.columns) else suchwert
+            # Nur wenn Checkbox aktiviert ist, Online-Quellen abfragen
+            if use_online_var.get():
+                online_results_list = get_online_results(artikelnummer)
             else:
-                artikelnummer = suchwert
-            online_results_list = get_online_results(artikelnummer)
+                online_results_list = []
             merged = merge_results(db_rows, online_results_list)
             if merged is not None and not merged.empty:
                 gesamt_ergebnisse.append(merged)
