@@ -165,13 +165,14 @@ def start_app():
             return
 
         bauteile = bom_df[art_col].dropna().unique()
+        bauteile = [teil for teil in bauteile if str(teil).strip().upper() != "SPLICE"]
         gesamt_ergebnisse = []
 
         # Fortschrittsbalken initialisieren
         total = len(bauteile)
         progress_var.set(0)
         progress_bar.update()
-        status_label.config(text=f"Lade BOM: Teile werden verarbeitet ...")
+        status_label.config(text=f"Lade BOM: 0/ {total} Teile werden verarbeitet ...")
         root.update_idletasks()
 
         for idx, suchwert in enumerate(bauteile):
@@ -190,7 +191,7 @@ def start_app():
             # Fortschritt aktualisieren
             progress = (idx + 1) / total * 100
             progress_var.set(progress)
-            status_label.config(text=f"Lade BOM: Teile werden verarbeitet ...")
+            status_label.config(text=f"Lade BOM: {idx + 1}/ {total} Teile werden verarbeitet ...")
             root.update_idletasks()
 
         progress_var.set(100)
