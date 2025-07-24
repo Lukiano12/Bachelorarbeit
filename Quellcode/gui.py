@@ -2,6 +2,7 @@ import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
+import threading
 from excel_search import load_excel, search_and_show, merge_results
 from online_sources import get_online_results
 from bom_tools import read_bom, detect_both_part_columns
@@ -153,68 +154,72 @@ def start_app():
             )
 
     def load_bom_and_search():
-        if df is None:
-            messagebox.showwarning("Keine Datenbank", "Bitte laden Sie zuerst eine Datenbank-Datei.")
-            return
-        bomfile = filedialog.askopenfilename(
-            title="BOM-Datei wählen",
-            filetypes=[("Excel/CSV", "*.xls*;*.csv")]
-        )
-        if not bomfile:
-            return
-        try:
-            bom_df = read_bom(bomfile)
-            sap_col, art_col = detect_both_part_columns(bom_df)
-        except Exception as e:
-            messagebox.showerror("BOM-Fehler", str(e))
-            return
+        def worker():
+            if df is None:
+                messagebox.showwarning("Keine Datenbank", "Bitte laden Sie zuerst eine Datenbank-Datei.")
+                return
+            bomfile = filedialog.askopenfilename(
+                title="BOM-Datei wählen",
+                filetypes=[("Excel/CSV", "*.xls*;*.csv")]
+            )
+            if not bomfile:
+             return
+            try:
+                bom_df = read_bom(bomfile)
+                sap_col, art_col = detect_both_part_columns(bom_df)
+            except Exception as e:
+                messagebox.showerror("BOM-Fehler", str(e))
+                return
 
-        bauteile = bom_df[art_col].dropna().unique()
-        bauteile = [teil for teil in bauteile if str(teil).strip().upper() != "SPLICE"]
-        gesamt_ergebnisse = []
+            bauteile = bom_df[art_col].dropna().unique()
+            bauteile = [teil for teil in bauteile if str(teil).strip().upper() != "SPLICE"]
+            gesamt_ergebnisse = []
 
-        # Fortschrittsbalken initialisieren
-        total = len(bauteile)
-        progress_var.set(0)
-        progress_bar.update()
-        status_label.config(text=f"Lade BOM: 0/ {total} Teile werden verarbeitet ...")
-        root.update_idletasks()
+            total = len(bauteile)
+            def update_progress(idx):
+                progress = (idx + 1) / total * 100
+                progress_var.set(progress)
+                status_label.config(text=f"Lade BOM: {idx + 1}/ {total} Teile werden verarbeitet ...")
+                root.update_idletasks()
 
-        for idx, suchwert in enumerate(bauteile):
-            suchwert = str(suchwert).strip()
-            if not suchwert:
-                continue
-            db_rows = search_and_show(df, suchwert, search_cols)
-            artikelnummer = db_rows.iloc[0]['WN_HerstellerBestellnummer_1'] if (db_rows is not None and 'WN_HerstellerBestellnummer_1' in db_rows.columns) else suchwert
-            # Nur wenn Checkbox aktiviert ist, Online-Quellen abfragen
-            if use_online_var.get():
-                online_results_list = get_online_results(artikelnummer)
-            else:
-                online_results_list = []
-            merged = merge_results(db_rows, online_results_list)
-            if merged is not None and not merged.empty:
-                gesamt_ergebnisse.append(merged)
-            # Fortschritt aktualisieren
-            progress = (idx + 1) / total * 100
-            progress_var.set(progress)
-            status_label.config(text=f"Lade BOM: {idx + 1}/ {total} Teile werden verarbeitet ...")
+            progress_var.set(0)
+            progress_bar.update()
+            status_label.config(text=f"Lade BOM: 0/ {total} Teile werden verarbeitet ...")
             root.update_idletasks()
 
-        progress_var.set(100)
-        status_label.config(text=f"BOM-Laden abgeschlossen.")
-        progress_bar.update()
-        root.update_idletasks()
+            for idx, suchwert in enumerate(bauteile):
+                suchwert = str(suchwert).strip()
+                if not suchwert:
+                    continue
+                db_rows = search_and_show(df, suchwert, search_cols)
+                artikelnummer = db_rows.iloc[0]['WN_HerstellerBestellnummer_1'] if (db_rows is not None and 'WN_HerstellerBestellnummer_1' in db_rows.columns) else suchwert
+                if use_online_var.get():
+                    online_results_list = get_online_results(artikelnummer)
+                else:
+                    online_results_list = []
+                merged = merge_results(db_rows, online_results_list)
+                if merged is not None and not merged.empty:
+                    gesamt_ergebnisse.append(merged)
+                # Fortschritt im Hauptthread aktualisieren
+                root.after(0, update_progress, idx)
 
-        if not gesamt_ergebnisse:
-            messagebox.showinfo("Info", "Keine Ergebnisse für die BOM-Bauteile.")
-            return
+            root.after(0, progress_var.set, 100)
+            root.after(0, status_label.config, {"text": "BOM-Laden abgeschlossen."})
+            root.after(0, progress_bar.update)
+            root.after(0, root.update_idletasks)
 
-        gesamt_df = pd.concat(gesamt_ergebnisse, ignore_index=True)
-        db_spalten = [col for col in gesamt_df.columns if not ("mouser" in col.lower() or "octopart" in col.lower())]
-        online_spalten = [col for col in gesamt_df.columns if ("mouser" in col.lower() or "octopart" in col.lower())]
-        gesamt_df = gesamt_df[db_spalten + online_spalten]
-        show_table(gesamt_df, tree)
-        tree.gesamt_df = gesamt_df  # Für Export
+            if not gesamt_ergebnisse:
+                root.after(0, messagebox.showinfo, "Info", "Keine Ergebnisse für die BOM-Bauteile.")
+                return
+
+            gesamt_df = pd.concat(gesamt_ergebnisse, ignore_index=True)
+            db_spalten = [col for col in gesamt_df.columns if not ("mouser" in col.lower() or "octopart" in col.lower())]
+            online_spalten = [col for col in gesamt_df.columns if ("mouser" in col.lower() or "octopart" in col.lower())]
+            gesamt_df = gesamt_df[db_spalten + online_spalten]
+            root.after(0, show_table, gesamt_df, tree)
+            tree.gesamt_df = gesamt_df  # Für Export
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def export_as_excel():
         df_to_export = getattr(tree, "gesamt_df", None)
