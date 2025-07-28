@@ -1,5 +1,6 @@
 import pandas as pd
 from utils import format_value, sapnr_to_str
+from datetime import datetime, timedelta
 
 def load_excel(file):
     sheet = "DB_4erDS"
@@ -34,6 +35,8 @@ def search_and_show(df, search, search_cols):
     return df.iloc[start:end]
 
 def merge_results(db_rows, online_results_list):
+    from datetime import datetime, timedelta
+
     if db_rows is None or db_rows.empty:
         if online_results_list:
             data = {}
@@ -65,4 +68,37 @@ def merge_results(db_rows, online_results_list):
                 res.get("Losgröße", ""),
                 res.get("Quelle", ""),
             ]
+    # --- Status-Spalte für Markierung ---
+    status_list = [""] * len(df)
+    block_size = 4
+    today = datetime.today()
+    for i in range(0, len(df), block_size):
+        block_veraltet = False
+        for col in df.columns:
+            for j in range(block_size):
+                if i + j < len(df):
+                    val = str(df.iloc[i + j][col]).strip()
+                    # Unix-Timestamp prüfen
+                    if val.isdigit() and len(val) >= 12:
+                        try:
+                            ts = int(val)
+                            if ts > 1e12:
+                                ts = ts // 1000
+                            d = datetime.fromtimestamp(ts)
+                            if d < today - timedelta(days=365):
+                                block_veraltet = True
+                        except Exception:
+                            continue
+                    else:
+                        # Normales Datum prüfen
+                        try:
+                            d = datetime.strptime(val, "%d.%m.%Y")
+                            if d < today - timedelta(days=365):
+                                block_veraltet = True
+                        except Exception:
+                            continue
+        for j in range(block_size):
+            if i + j < len(status_list):
+                status_list[i + j] = "veraltet" if block_veraltet else ""
+    df["Status"] = status_list
     return df

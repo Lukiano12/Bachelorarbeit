@@ -20,9 +20,14 @@ def show_table(df, tree):
     for col in df.columns:
         tree.heading(col, text=str(col))
         tree.column(col, width=120, anchor="center")
+    # --- NEU: Tag für veraltet ---
+    tree.tag_configure("veraltet", background="#ffcccc")
     for _, row in df.iterrows():
         values = [str(x) if x is not None else '' for x in row]
-        tree.insert("", tk.END, values=values)
+        tags = ()
+        if "Status" in df.columns and row["Status"] == "veraltet":
+            tags = ("veraltet",)
+        tree.insert("", tk.END, values=values, tags=tags)
 
 def load_db_from_json(json_path):
     if not os.path.exists(json_path):
