@@ -9,7 +9,14 @@ from bom_tools import read_bom, detect_both_part_columns
 
 DB_JSON_FILE = "database.json"   # Your default DB filename
 
-def show_table(df, tree):
+def show_table(df, tree, veraltet_indices=None):
+
+    print("Veraltete Indices:", veraltet_indices)
+
+    if veraltet_indices is None:
+        veraltet_indices = []
+    if "Status" in df.columns:
+        df = df.drop(columns=["Status"])
     df = df.replace({None: '', 'nan': '', float('nan'): ''}).fillna('')
     df = df.loc[:, (df != '').any(axis=0)]
     for col in tree["columns"]:
@@ -20,15 +27,14 @@ def show_table(df, tree):
     for col in df.columns:
         tree.heading(col, text=str(col))
         tree.column(col, width=120, anchor="center")
-    # --- NEU: Tag für veraltet ---
     tree.tag_configure("veraltet", background="#ffcccc")
-    for _, row in df.iterrows():
+    for idx, (_, row) in enumerate(df.iterrows()):
         values = [str(x) if x is not None else '' for x in row]
         tags = ()
-        if "Status" in df.columns and row["Status"] == "veraltet":
+        if idx in veraltet_indices:
             tags = ("veraltet",)
-        tree.insert("", tk.END, values=values, tags=tags)
-
+        tree.insert("", "end", values=values, tags=tags)
+        
 def load_db_from_json(json_path):
     if not os.path.exists(json_path):
         return None
@@ -149,9 +155,9 @@ def start_app():
             online_results_list = get_online_results(artikelnummer)
         else:
             online_results_list = []
-        merged = merge_results(db_rows, online_results_list)
+        merged, veraltet_indices = merge_results(db_rows, online_results_list)
         if merged is not None and not merged.empty:
-            show_table(merged, tree)
+            show_table(merged, tree, veraltet_indices)
             tree.gesamt_df = merged  # Für Export
         else:
             messagebox.showinfo(
@@ -168,7 +174,7 @@ def start_app():
                 filetypes=[("Excel/CSV", "*.xls*;*.csv")]
             )
             if not bomfile:
-             return
+                return
             try:
                 bom_df = read_bom(bomfile)
                 sap_col, art_col = detect_both_part_columns(bom_df)
@@ -179,6 +185,7 @@ def start_app():
             bauteile = bom_df[art_col].dropna().unique()
             bauteile = [teil for teil in bauteile if str(teil).strip().upper() != "SPLICE"]
             gesamt_ergebnisse = []
+            gesamt_veraltet = []
 
             total = len(bauteile)
             def update_progress(idx):
@@ -195,17 +202,18 @@ def start_app():
             for idx, suchwert in enumerate(bauteile):
                 suchwert = str(suchwert).strip()
                 if not suchwert:
-                    continue
+                 continue
                 db_rows = search_and_show(df, suchwert, search_cols)
                 artikelnummer = db_rows.iloc[0]['WN_HerstellerBestellnummer_1'] if (db_rows is not None and 'WN_HerstellerBestellnummer_1' in db_rows.columns) else suchwert
                 if use_online_var.get():
                     online_results_list = get_online_results(artikelnummer)
                 else:
                     online_results_list = []
-                merged = merge_results(db_rows, online_results_list)
+                merged, veraltet_indices = merge_results(db_rows, online_results_list)
                 if merged is not None and not merged.empty:
+                    offset = sum(len(df) for df in gesamt_ergebnisse)
                     gesamt_ergebnisse.append(merged)
-                # Fortschritt im Hauptthread aktualisieren
+                    gesamt_veraltet.extend([i + offset for i in veraltet_indices])
                 root.after(0, update_progress, idx)
 
             root.after(0, progress_var.set, 100)
@@ -221,7 +229,7 @@ def start_app():
             db_spalten = [col for col in gesamt_df.columns if not ("mouser" in col.lower() or "octopart" in col.lower())]
             online_spalten = [col for col in gesamt_df.columns if ("mouser" in col.lower() or "octopart" in col.lower())]
             gesamt_df = gesamt_df[db_spalten + online_spalten]
-            root.after(0, show_table, gesamt_df, tree)
+            root.after(0, show_table, gesamt_df, tree, gesamt_veraltet)
             tree.gesamt_df = gesamt_df  # Für Export
 
         threading.Thread(target=worker, daemon=True).start()

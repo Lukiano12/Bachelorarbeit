@@ -50,13 +50,14 @@ def merge_results(db_rows, online_results_list):
                         res.get("Quelle", "")
                     ]
             if not data:
-                return None
-            return pd.DataFrame(data)
+                return None, []
+            return pd.DataFrame(data), []
         else:
-            return None
+            return None, []
 
     df = db_rows.copy()
     for col in df.columns:
+        df[col] = df[col].astype(object)  # Typumwandlung für Kompatibilität
         df.iloc[0, df.columns.get_loc(col)] = format_value(df.iloc[0, df.columns.get_loc(col)], "Datum")
         df.iloc[1, df.columns.get_loc(col)] = format_value(df.iloc[1, df.columns.get_loc(col)], "Preis")
     for res in online_results_list:
@@ -68,10 +69,9 @@ def merge_results(db_rows, online_results_list):
                 res.get("Losgröße", ""),
                 res.get("Quelle", ""),
             ]
-    # --- Status-Spalte für Markierung ---
-    status_list = [""] * len(df)
     block_size = 4
     today = datetime.today()
+    veraltet_indices = []
     for i in range(0, len(df), block_size):
         block_veraltet = False
         for col in df.columns:
@@ -97,8 +97,6 @@ def merge_results(db_rows, online_results_list):
                                 block_veraltet = True
                         except Exception:
                             continue
-        for j in range(block_size):
-            if i + j < len(status_list):
-                status_list[i + j] = "veraltet" if block_veraltet else ""
-    df["Status"] = status_list
-    return df
+        if block_veraltet:
+            veraltet_indices.extend(range(i, min(i + block_size, len(df))))
+    return df, veraltet_indices
