@@ -39,7 +39,16 @@ def load_db_from_json(json_path):
     if not os.path.exists(json_path):
         return None
     try:
-        return pd.read_json(json_path, orient="split")
+        df = pd.read_json(json_path, orient="split")
+        # Nur die Zeilen im 4er-Block, die wirklich Datum sind, umwandeln
+        block_size = 4
+        for col in df.columns:
+            for i in range(0, len(df), block_size):
+                val = df.iloc[i][col]
+                # Nur wenn es wirklich ein Timestamp ist, umwandeln
+                if isinstance(val, (int, float)) and val > 1e12:
+                    df.iloc[i, df.columns.get_loc(col)] = pd.to_datetime(val, unit='ms')
+        return df
     except Exception as e:
         print(f"Fehler beim Laden von JSON: {e}")
         return None
