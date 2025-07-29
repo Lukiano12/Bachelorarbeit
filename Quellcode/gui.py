@@ -14,10 +14,9 @@ try:
 except ImportError:
     HAS_WIN32 = False
 
-DB_JSON_FILE = "database.json"   # Your default DB filename
+DB_JSON_FILE = "database.json"
 
 def show_table(df, tree, veraltet_indices=None):
-    print("Veraltete Indices:", veraltet_indices)
     if veraltet_indices is None:
         veraltet_indices = []
     if "Status" in df.columns:
@@ -25,28 +24,6 @@ def show_table(df, tree, veraltet_indices=None):
     df = df.replace({None: '', 'nan': '', float('nan'): ''}).fillna('')
     df = df.loc[:, (df != '').any(axis=0)]
 
-    # --- Duplikate pro Spalte/Block entfernen ---
-    block_size = 4
-    unique_blocks = []
-    seen_blocks = set()
-    for i in range(0, len(df), block_size):
-        block = df.iloc[i:i+block_size]
-        # Für jede Spalte prüfen
-        for col in df.columns:
-            block_tuple = tuple(block[col].values)
-            key = (col, block_tuple)
-            if key not in seen_blocks:
-                seen_blocks.add(key)
-                # Block in neues DataFrame übernehmen
-                if len(unique_blocks) <= i:
-                    unique_blocks.extend([{} for _ in range(i + block_size - len(unique_blocks))])
-                for j in range(block_size):
-                    unique_blocks[i + j][col] = block.iloc[j][col]
-    # Neues DataFrame aus den eindeutigen Blöcken bauen
-    if unique_blocks:
-        df = pd.DataFrame(unique_blocks)
-
-    # Treeview vorbereiten: Checkbox-Spalte + Daten
     tree["columns"] = ["Auswahl"] + list(df.columns)
     tree.heading("Auswahl", text="✓")
     tree.column("Auswahl", width=40, anchor="center")
@@ -56,13 +33,8 @@ def show_table(df, tree, veraltet_indices=None):
     tree.delete(*tree.get_children())
     tree.tag_configure("veraltet", background="#ffcccc")
 
-    block_size = 4
     for idx, (_, row) in enumerate(df.iterrows()):
-        # Nur in der ersten Zeile eines Blocks Checkbox anzeigen
-        if idx % block_size == 0:
-            values = [""]
-        else:
-            values = [""]  # Leere Checkbox-Spalte für die anderen Zeilen
+        values = [""]  # Auswahl immer leer setzen!
         for x in row:
             if isinstance(x, (pd.Timestamp, datetime)):
                 values.append(x.strftime("%d.%m.%Y"))
@@ -100,48 +72,27 @@ def save_db_to_json(df, json_path=DB_JSON_FILE):
         print(f"Fehler beim Speichern zu JSON: {e}")
 
 def clean_price(value):
-    # Entfernt €-Zeichen, Leerzeichen und wandelt Komma in Punkt für float
     if isinstance(value, str):
         value = value.replace("€", "").replace(" ", "").replace(",", ".")
     try:
         return float(value)
     except Exception:
-        return value  # Falls es kein Preis ist (z.B. Text), bleibt es wie es ist
-
-def block_exists_in_db(df, artikelnummer, nummer_1000er, price_block):
-    # Suche alle Blöcke für diesen Artikel in der Datenbank
-    block_size = 4
-    for i in range(0, len(df), block_size):
-        row_artikel = str(df.iloc[i][df.columns[0]])
-        row_1000er = str(df.iloc[i][df.columns[1]]) if len(df.columns) > 1 else ""
-        if artikelnummer == row_artikel or nummer_1000er == row_1000er:
-            for col in df.columns:
-                alt_block = [
-                    str(df.iloc[i][col]).strip(),
-                    str(df.iloc[i+1][col]).strip(),
-                    str(df.iloc[i+2][col]).strip(),
-                    str(df.iloc[i+3][col]).strip()
-                ]
-                # Preis im Altblock auch bereinigen
-                try:
-                    alt_block[1] = str(clean_price(alt_block[1]))
-                except Exception:
-                    pass
-                # Preis im neuen Block als String für Vergleich
-                new_block = [
-                    str(price_block[0]).strip(),
-                    str(price_block[1]).strip(),
-                    str(price_block[2]).strip(),
-                    str(price_block[3]).strip()
-                ]
-                if alt_block == new_block:
-                    return True
-    return False
+        return value
 
 def is_online_source(colname):
-    # Passe die Liste an deine Online-Quellen an!
     online_keywords = ["mouser", "octopart", "digi-key", "arrow", "online", "connector"]
     return any(key in colname.lower() for key in online_keywords)
+
+def normalize(val):
+    if val is None:
+        return ""
+    return str(val).strip().lower()
+
+def normalize_losgroesse(val):
+    try:
+        return str(int(float(str(val).replace(",", ".").strip())))
+    except Exception:
+        return str(val).strip().lower()
 
 def update_excel_prices_win32com(excel_path, updates):
     if not HAS_WIN32:
@@ -156,49 +107,59 @@ def update_excel_prices_win32com(excel_path, updates):
         ws.Unprotect("cpq6ve")
         max_row = ws.UsedRange.Rows.Count
 
-        max_row = ws.UsedRange.Rows.Count
-
         for upd in updates:
-            suchnummer = str(upd.get("artikelnummer") or upd.get("1000ernummer"))
+            suchnummer = str(upd.get("artikelnummer") or upd.get("1000ernummer")).strip().lower()
+            price_block = upd['price_block']
+            losgroesse = str(price_block[2]).strip()
+            quelle = str(price_block[3]).strip().lower()
             gefunden = False
-            # Suche nach bestehendem Block mit gleicher Losgröße & Quelle
+
+            # [DEBUG] Update-Versuch
+            print(f"[DEBUG] UPDATE-VERSUCH: suchnummer={suchnummer}, losgroesse={losgroesse}, quelle={quelle}, price_block={price_block}")
+
+            # Suche nach bestehendem Block mit gleicher Artikelnummer, Losgröße & Quelle
             for row in range(8, max_row + 1, 4):
-                zelle_artikel = str(ws.Cells(row, 2).Value)
-                zelle_1000er = str(ws.Cells(row, 3).Value)
+                zelle_artikel = str(ws.Cells(row, 2).Value).strip().lower()
+                zelle_1000er = str(ws.Cells(row, 3).Value).strip().lower()
+                alt_losgroesse = str(ws.Cells(row + 2, 24).Value).strip()
+                alt_quelle = str(ws.Cells(row + 3, 24).Value).strip().lower()
+                # [DEBUG] Vergleichswerte aus Excel
+                print(f"[DEBUG] EXCEL-ZEILE: row={row}, artikel={zelle_artikel}, 1000er={zelle_1000er}, alt_losgroesse={alt_losgroesse}, alt_quelle={alt_quelle}")
+
                 if suchnummer in (zelle_artikel, zelle_1000er):
-                    alt_losgroesse = str(ws.Cells(row + 2, 24).Value).strip()
-                    alt_quelle = str(ws.Cells(row + 3, 24).Value).strip()
-                    neu_losgroesse = str(upd['price_block'][2]).strip()
-                    neu_quelle = str(upd['price_block'][3]).strip()
-                    if alt_losgroesse == neu_losgroesse and alt_quelle == neu_quelle:
-                        # Block gefunden: Überschreiben!
-                        for i, value in enumerate(upd['price_block']):
+                    if normalize_losgroesse(alt_losgroesse) == normalize_losgroesse(losgroesse) and normalize(alt_quelle) == normalize(quelle):
+                        # Block existiert: Überschreiben und KEINEN neuen Block anlegen!
+                        for i, value in enumerate(price_block):
                             ws.Cells(row + i, 24).Value = value
-                            print(f"[DEBUG] Aktualisiere Wert '{value}' in Zeile {row + i}, Spalte 24 (X)")
                         gefunden = True
+                        print(f"[DEBUG] -> Überschrieben! (row={row})")
                         break
-            if not gefunden:
-                # Kein passender Block: Füge neuen Block am Ende an
-                for row in range(8, max_row + 1, 4):
-                    zelle_artikel = str(ws.Cells(row, 2).Value)
-                    zelle_1000er = str(ws.Cells(row, 3).Value)
-                    if suchnummer in (zelle_artikel, zelle_1000er):
-                        if all(str(ws.Cells(row + i, 24).Value).strip() in ("", "None", "nan") for i in range(4)):
-                            for i, value in enumerate(upd['price_block']):
-                                ws.Cells(row + i, 24).Value = value
-                                print(f"[DEBUG] Schreibe neuen Wert '{value}' in Zeile {row + i}, Spalte 24 (X)")
-                            gefunden = True
+
+            if gefunden:
+                continue  # Wenn überschrieben, KEIN neuer Block anlegen!
+
+            # Kein passender Block: Füge neuen Block am Ende an
+            for row in range(8, max_row + 1, 4):
+                zelle_artikel = str(ws.Cells(row, 2).Value).strip().lower()
+                zelle_1000er = str(ws.Cells(row, 3).Value).strip().lower()
+                if suchnummer in (zelle_artikel, zelle_1000er):
+                    empty = True
+                    for i in range(4):
+                        val = ws.Cells(row + i, 24).Value
+                        if val is not None and str(val).strip().lower() not in ("", "none", "nan"):
+                            empty = False
                             break
-                # Falls kein leerer Block gefunden, ggf. am Ende anfügen (optional)
+                    if empty:
+                        for i, value in enumerate(price_block):
+                            ws.Cells(row + i, 24).Value = value
+                        print(f"[DEBUG] -> Neu angelegt! (row={row})")
+                        break
 
             wb.Save()
-            # Makro nach jedem Block ausführen (auf geöffneter Datei)
             try:
-                print("[DEBUG] Starte Makro...")
                 excel.Application.Run(f"'{wb.Name}'!NewPricesInDB")
                 wb.Save()
             except Exception as e:
-                print(f"[ERROR] Fehler beim Makro: {e}")
                 messagebox.showerror("Makro-Fehler", f"Makro konnte nicht ausgeführt werden:\n{e}")
 
         ws.Protect("cpq6ve", DrawingObjects=True, Contents=True, Scenarios=True, AllowFiltering=True)
@@ -210,26 +171,6 @@ def update_excel_prices_win32com(excel_path, updates):
         print(f"[ERROR] Fehler beim Schreiben in Excel: {e}")
         messagebox.showerror("Excel-Fehler", f"Fehler beim Schreiben in Excel:\n{e}")
 
-def run_excel_macro(excel_path, macro_name):
-    if not HAS_WIN32:
-        messagebox.showerror("Error", "win32com.client ist nicht installiert. Kann Makros nicht ausführen.")
-        return
-    try:
-        print(f"[DEBUG] Starte Excel für Makro: {excel_path}")
-        excel = win32com.client.Dispatch("Excel.Application")
-        excel.Visible = True  # Sichtbar machen für Debug!
-        wb = excel.Workbooks.Open(os.path.abspath(excel_path))
-        print(f"[DEBUG] Führe Makro aus: {macro_name}")
-        excel.Application.Run(f"'{wb.Name}'!{macro_name}")
-        wb.Save()
-        print("[DEBUG] Nach Makro: Datei gespeichert.")
-        wb.Close()
-        excel.Quit()
-        print("[DEBUG] Excel geschlossen nach Makro.")
-    except Exception as e:
-        print(f"[ERROR] Fehler beim Makro: {e}")
-        messagebox.showerror("Makro-Fehler", f"Excel konnte die Datei nicht öffnen oder das Makro nicht ausführen.\n\n{e}")
-
 def start_app():
     root = tk.Tk()
     root.title("Preis-DB & Online-Preise")
@@ -238,7 +179,6 @@ def start_app():
     df = None
     search_cols = ["WN_SAP-Artikel-NR", "WN_HerstellerBestellnummer_1"]
 
-    # --- GUI Elements ---
     frame = tk.Frame(root)
     frame.pack(fill="x", padx=10, pady=4)
     tk.Label(frame, text="Artikelnummer oder SAP-Nummer:").pack(side="left")
@@ -282,7 +222,6 @@ def start_app():
     status_label = tk.Label(root, text="Bereit")
     status_label.pack(fill="x", padx=10, pady=(0, 5))
 
-    # --- Checkbox-Umschaltung im Treeview ---
     def on_tree_click(event):
         item = tree.identify_row(event.y)
         col = tree.identify_column(event.x)
@@ -290,7 +229,6 @@ def start_app():
             return
         idx = int(tree.index(item))
         block_size = 4
-        # Nur Checkbox in der ersten Zeile eines Blocks toggeln
         if idx % block_size == 0:
             current = tree.set(item, "Auswahl")
             tree.set(item, "Auswahl", "✓" if current != "✓" else "")
@@ -351,8 +289,9 @@ def start_app():
             online_results_list = []
         merged, veraltet_indices = merge_results(db_rows, online_results_list)
         if merged is not None and not merged.empty:
+            merged = merged.replace({None: '', 'nan': '', float('nan'): ''}).fillna('')
             show_table(merged, tree, veraltet_indices)
-            tree.gesamt_df = merged  # Für Export
+            tree.gesamt_df = merged
             tree.veraltet_indices = veraltet_indices
             tree.anzeige_df = merged
         else:
@@ -361,7 +300,6 @@ def start_app():
             )
 
     def update_selected_prices_in_excel():
-        # Nur Checkbox in der ersten Zeile jedes Blocks zählt!
         selected_items = []
         block_size = 4
         for item in tree.get_children():
@@ -378,7 +316,6 @@ def start_app():
             messagebox.showinfo("No data", "No outdated blocks to update.")
             return
 
-        # Excel-Datei auswählen (wird direkt bearbeitet!)
         excel_path = filedialog.askopenfilename(
             title="Excel-Datei wählen",
             filetypes=[
@@ -393,13 +330,12 @@ def start_app():
         updates = []
         for item in selected_items:
             idx = int(tree.index(item))
-            if idx * block_size not in veraltet_indices:
+            if idx not in veraltet_indices:
                 continue
-            entry_row = idx * block_size
-            block_rows = anzeige_df.iloc[entry_row:entry_row+block_size]
+            block_rows = anzeige_df.iloc[idx:idx+block_size]
             for col in anzeige_df.columns:
                 if not is_online_source(col):
-                    continue  # Nur Online-Quellen prüfen/überschreiben!
+                    continue
                 price_block = [
                     block_rows.iloc[0][col],
                     clean_price(block_rows.iloc[1][col]),
@@ -409,20 +345,19 @@ def start_app():
                 if all(str(x).strip() not in ("", "nan", "None") for x in price_block):
                     artikelnummer = str(block_rows.iloc[0][anzeige_df.columns[0]])
                     nummer_1000er = str(block_rows.iloc[0][anzeige_df.columns[1]]) if len(anzeige_df.columns) > 1 else ""
-                    # Prüfe, ob Block schon existiert:
-                    if not block_exists_in_db(df, artikelnummer, nummer_1000er, price_block):
-                        updates.append({
-                            'artikelnummer': artikelnummer,
-                            '1000ernummer': nummer_1000er,
-                            'price_block': price_block,
-                            'quelle': col
-                        })
-                        print(f"[DEBUG] Update: artikelnummer={artikelnummer}, 1000ernummer={nummer_1000er}, quelle={col}, price_block={price_block}")
-
+                    # [DEBUG] Update wird vorbereitet
+                    print(f"[DEBUG] PREPARE UPDATE: artikelnummer={artikelnummer}, 1000ernummer={nummer_1000er}, price_block={price_block}, quelle={col}")
+                    updates.append({
+                        'artikelnummer': artikelnummer,
+                        '1000ernummer': nummer_1000er,
+                        'price_block': price_block,
+                        'quelle': col
+                    })
         if not updates:
             messagebox.showinfo("No update", "Kein vollständiger und neuer Online-Block gefunden.")
             return
 
+        print(f"[DEBUG] Anzahl Updates, die an Excel übergeben werden: {len(updates)}")
         update_excel_prices_win32com(excel_path, updates)
         messagebox.showinfo("Done", f"Excel-Datei wurde aktualisiert und gespeichert:\n{excel_path}")
 
@@ -464,7 +399,7 @@ def start_app():
             for idx, suchwert in enumerate(bauteile):
                 suchwert = str(suchwert).strip()
                 if not suchwert:
-                 continue
+                    continue
                 db_rows = search_and_show(df, suchwert, search_cols)
                 artikelnummer = db_rows.iloc[0]['WN_HerstellerBestellnummer_1'] if (db_rows is not None and 'WN_HerstellerBestellnummer_1' in db_rows.columns) else suchwert
                 if use_online_var.get():
@@ -473,6 +408,7 @@ def start_app():
                     online_results_list = []
                 merged, veraltet_indices = merge_results(db_rows, online_results_list)
                 if merged is not None and not merged.empty:
+                    merged = merged.replace({None: '', 'nan': '', float('nan'): ''}).fillna('')
                     offset = sum(len(df) for df in gesamt_ergebnisse)
                     gesamt_ergebnisse.append(merged)
                     gesamt_veraltet.extend([i + offset for i in veraltet_indices])
@@ -488,11 +424,12 @@ def start_app():
                 return
 
             gesamt_df = pd.concat(gesamt_ergebnisse, ignore_index=True)
+            gesamt_df = gesamt_df.replace({None: '', 'nan': '', float('nan'): ''}).fillna('')
             db_spalten = [col for col in gesamt_df.columns if not ("mouser" in col.lower() or "octopart" in col.lower())]
             online_spalten = [col for col in gesamt_df.columns if ("mouser" in col.lower() or "octopart" in col.lower())]
             gesamt_df = gesamt_df[db_spalten + online_spalten]
             root.after(0, show_table, gesamt_df, tree, gesamt_veraltet)
-            tree.gesamt_df = gesamt_df  # Für Export
+            tree.gesamt_df = gesamt_df
             tree.veraltet_indices = gesamt_veraltet
             tree.anzeige_df = gesamt_df
 
@@ -503,6 +440,7 @@ def start_app():
         if df_to_export is None or df_to_export.empty:
             messagebox.showwarning("Export", "Keine Daten zum Exportieren!")
             return
+        df_to_export = df_to_export.replace({None: '', 'nan': '', float('nan'): ''}).fillna('')
         fname = filedialog.asksaveasfilename(
             defaultextension=".xlsx",
             filetypes=[("Excel", "*.xlsx")],
