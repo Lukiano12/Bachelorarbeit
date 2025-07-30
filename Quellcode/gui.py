@@ -192,7 +192,7 @@ def start_app():
     export_btn.pack(side="left", padx=5)
     update_db_btn = tk.Button(frame, text="Datenbank aktualisieren", width=18)
     update_db_btn.pack(side="left", padx=5)
-    update_excel_btn = tk.Button(frame, text="Update Excel Prices", width=18)
+    update_excel_btn = tk.Button(frame, text="Excel-Preise aktualisieren", width=18)
     update_excel_btn.pack(side="left", padx=5)
 
     use_online_var = tk.BooleanVar(value=True)
