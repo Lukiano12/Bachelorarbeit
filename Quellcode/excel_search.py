@@ -8,7 +8,8 @@ def load_excel(file):
     cols_to_drop = [
         "Unnamed: 0", "Unnamed: 17", "Unnamed: 18", "Unnamed: 19",
         "Unnamed: 20", "Unnamed: 21", "Unnamed: 22",
-        "WN_PinClass", "WN_PolCount_NUM", "WN_Color", "WN_Min_CrossSection", "WN_Max_CrossSection" 
+        "WN_PinClass", "WN_PolCount_NUM", "WN_Color", "WN_Min_CrossSection", "WN_Max_CrossSection",
+        "ENTRY", "Description_deutsch_2"
     ]
     if "WN_SAP-Artikel-NR" in df.columns:
         df["WN_SAP-Artikel-NR"] = df["WN_SAP-Artikel-NR"].apply(sapnr_to_str)
@@ -30,6 +31,9 @@ def search_and_show(df, search, search_cols):
     indices = mask[mask].index
     if len(indices) == 0:
         return None
+    # Wenn mehrere Treffer, gib alle zurück, sonst wie bisher die ersten 4 Zeilen
+    if len(indices) > 4:
+        return df.loc[indices]
     start = indices[0]
     end = min(start + 4, len(df))
     return df.iloc[start:end]
