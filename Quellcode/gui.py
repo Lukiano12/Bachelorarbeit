@@ -108,9 +108,12 @@ def build_excel_index(ws, max_row):
         index[key] = row
     return index
 
-def update_excel_prices_win32com(excel_path, updates):
+def update_excel_prices_win32com(excel_path, updates, progress_var=None, status_label=None, root=None):
     if not HAS_WIN32:
-        messagebox.showerror("Error", "win32com.client ist nicht installiert. Kann Excel nicht automatisieren.")
+        if root:
+            root.after(0, messagebox.showerror, "Error", "win32com.client ist nicht installiert. Kann Excel nicht automatisieren.")
+        else:
+            messagebox.showerror("Error", "win32com.client ist nicht installiert. Kann Excel nicht automatisieren.")
         return
     try:
         import win32com.client
@@ -124,7 +127,8 @@ def update_excel_prices_win32com(excel_path, updates):
         # Index aufbauen
         excel_index = build_excel_index(ws, max_row)
 
-        for upd in updates:
+        total = len(updates)
+        for idx, upd in enumerate(updates):
             artikelnummer = str(upd.get("artikelnummer", "")).strip().lower()
             nummer_1000er = str(upd.get("1000ernummer", "")).strip().lower()
             price_block = upd['price_block']
@@ -134,7 +138,6 @@ def update_excel_prices_win32com(excel_path, updates):
 
             row = excel_index.get(key)
             if row:
-                # Direktes Update
                 for i, value in enumerate(price_block):
                     ws.Cells(row + i, 24).Value = value
             else:
@@ -154,21 +157,38 @@ def update_excel_prices_win32com(excel_path, updates):
                                 ws.Cells(row_candidate + i, 24).Value = value
                             break
 
+            # Fortschritt aktualisieren (immer im GUI-Thread)
+            if progress_var and status_label and root:
+                def update_gui(idx=idx):
+                    progress = (idx + 1) / total * 100
+                    progress_var.set(progress)
+                    status_label.config(text=f"Aktualisiere Preise: {idx + 1} / {total}")
+                    root.update_idletasks()
+                root.after(0, update_gui)
+
         wb.Save()
         try:
             excel.Application.Run(f"'{wb.Name}'!NewPricesInDB")
             wb.Save()
         except Exception as e:
-            messagebox.showerror("Makro-Fehler", f"Makro konnte nicht ausgeführt werden:\n{e}")
+            if root:
+                root.after(0, messagebox.showerror, "Makro-Fehler", f"Makro konnte nicht ausgeführt werden:\n{e}")
+            else:
+                messagebox.showerror("Makro-Fehler", f"Makro konnte nicht ausgeführt werden:\n{e}")
 
         ws.Protect("cpq6ve", DrawingObjects=True, Contents=True, Scenarios=True, AllowFiltering=True)
         wb.Save()
         wb.Close()
         excel.Quit()
         print("[DEBUG] Excel geschlossen.")
+        if root and status_label:
+            root.after(0, status_label.config, {"text": "Preis-Update abgeschlossen."})
     except Exception as e:
         print(f"[ERROR] Fehler beim Schreiben in Excel: {e}")
-        messagebox.showerror("Excel-Fehler", f"Fehler beim Schreiben in Excel:\n{e}")
+        if root:
+            root.after(0, messagebox.showerror, "Excel-Fehler", f"Fehler beim Schreiben in Excel:\n{e}")
+        else:
+            messagebox.showerror("Excel-Fehler", f"Fehler beim Schreiben in Excel:\n{e}")
 
 def start_app():
     root = tk.Tk()
@@ -363,8 +383,18 @@ def start_app():
             return
 
         print(f"[DEBUG] Anzahl Updates, die an Excel übergeben werden: {len(updates)}")
-        update_excel_prices_win32com(excel_path, updates)
-        messagebox.showinfo("Done", f"Excel-Datei wurde aktualisiert und gespeichert:\n{excel_path}")
+
+        # Fortschrittsbalken und Statuslabel sichtbar machen und in Thread ausführen
+        progress_var.set(0)
+        progress_bar.update()
+        status_label.config(text="Starte Preis-Update ...")
+        root.update_idletasks()
+
+        def worker():
+            update_excel_prices_win32com(excel_path, updates, progress_var, status_label, root)
+            root.after(0, messagebox.showinfo, "Done", f"Excel-Datei wurde aktualisiert und gespeichert:\n{excel_path}")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def load_bom_and_search():
         def worker():
