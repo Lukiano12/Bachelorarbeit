@@ -17,6 +17,8 @@ except ImportError:
 DB_JSON_FILE = "database.json"
 
 def show_table(df, tree, veraltet_indices=None):
+    hide_cols = ["ENTRY", "Description_deutsch_2"]  # Spalten, die ausgeblendet werden sollen
+    df = df.drop(columns=[col for col in hide_cols if col in df.columns], errors="ignore")
     if veraltet_indices is None:
         veraltet_indices = []
     if "Status" in df.columns:
@@ -220,7 +222,7 @@ def start_app():
     update_excel_btn = ttk.Button(frame, text="Excel-Preise aktualisieren", width=22)
     update_excel_btn.pack(side="left", padx=5)
 
-    use_online_var = tk.BooleanVar(value=True)
+    use_online_var = tk.BooleanVar(value=False)
     online_check = ttk.Checkbutton(frame, text="Online Quellen nutzen", variable=use_online_var, onvalue=True, offvalue=False)
     online_check.pack(side="left", padx=10)
 
@@ -336,8 +338,7 @@ def start_app():
             return
 
         anzeige_df = getattr(tree, "anzeige_df", None)
-        veraltet_indices = getattr(tree, "veraltet_indices", [])
-        if anzeige_df is None or not veraltet_indices:
+        if anzeige_df is None:
             messagebox.showinfo("No data", "No outdated blocks to update.")
             return
 
@@ -355,8 +356,6 @@ def start_app():
         updates = []
         for item in selected_items:
             idx = int(tree.index(item))
-            if idx not in veraltet_indices:
-                continue
             block_rows = anzeige_df.iloc[idx:idx+block_size]
             for col in anzeige_df.columns:
                 if not is_online_source(col):
@@ -366,11 +365,11 @@ def start_app():
                     clean_price(block_rows.iloc[1][col]),
                     block_rows.iloc[2][col],
                     block_rows.iloc[3][col],
+                    
                 ]
                 if all(str(x).strip() not in ("", "nan", "None") for x in price_block):
                     artikelnummer = str(block_rows.iloc[0][anzeige_df.columns[0]])
                     nummer_1000er = str(block_rows.iloc[0][anzeige_df.columns[1]]) if len(anzeige_df.columns) > 1 else ""
-                    # [DEBUG] Update wird vorbereitet
                     print(f"[DEBUG] PREPARE UPDATE: artikelnummer={artikelnummer}, 1000ernummer={nummer_1000er}, price_block={price_block}, quelle={col}")
                     updates.append({
                         'artikelnummer': artikelnummer,
@@ -378,6 +377,11 @@ def start_app():
                         'price_block': price_block,
                         'quelle': col
                     })
+                found_update = True
+            # Optional: Warnung, wenn für einen Block keine vollständigen Online-Spalten gefunden wurden
+            if not found_update:
+                print(f"[WARN] Kein vollständiger Online-Block für Index {idx} gefunden.")
+
         if not updates:
             messagebox.showinfo("No update", "Kein vollständiger und neuer Online-Block gefunden.")
             return
