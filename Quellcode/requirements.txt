@@ -6,3 +6,4 @@ xlrd
 openpyxl
 webdriver-manager
 python-dotenv
+customtkinter

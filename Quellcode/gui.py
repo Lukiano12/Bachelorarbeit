@@ -1,4 +1,5 @@
 import os
+import customtkinter as ctk
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
@@ -172,34 +173,38 @@ def update_excel_prices_win32com(excel_path, updates):
         messagebox.showerror("Excel-Fehler", f"Fehler beim Schreiben in Excel:\n{e}")
 
 def start_app():
-    root = tk.Tk()
+    ctk.set_appearance_mode("system")  # "dark", "light" oder "system"
+    ctk.set_default_color_theme("blue")  # oder "green", "dark-blue", etc.
+
+    root = ctk.CTk()
     root.title("Preis-DB & Online-Preise")
     root.geometry("1600x900")
 
     df = None
     search_cols = ["WN_SAP-Artikel-NR", "WN_HerstellerBestellnummer_1"]
 
-    frame = tk.Frame(root)
+    frame = ctk.CTkFrame(root)
     frame.pack(fill="x", padx=10, pady=4)
-    tk.Label(frame, text="Artikelnummer oder SAP-Nummer:").pack(side="left")
-    entry = tk.Entry(frame, width=35)
+    label = ctk.CTkLabel(frame, text="Artikelnummer oder SAP-Nummer:")
+    label.pack(side="left")
+    entry = ctk.CTkEntry(frame, width=250)
     entry.pack(side="left", padx=5)
-    search_btn = tk.Button(frame, text="Suche", width=12, state="disabled")
+    search_btn = ctk.CTkButton(frame, text="Suche", width=120, state="disabled")
     search_btn.pack(side="left", padx=5)
-    bom_btn = tk.Button(frame, text="BOM laden & Suchen", width=18, state="disabled")
+    bom_btn = ctk.CTkButton(frame, text="BOM laden & Suchen", width=160, state="disabled")
     bom_btn.pack(side="left", padx=5)
-    export_btn = tk.Button(frame, text="Export als Excel", width=15)
+    export_btn = ctk.CTkButton(frame, text="Export als Excel", width=140)
     export_btn.pack(side="left", padx=5)
-    update_db_btn = tk.Button(frame, text="Datenbank aktualisieren", width=18)
+    update_db_btn = ctk.CTkButton(frame, text="Datenbank aktualisieren", width=180)
     update_db_btn.pack(side="left", padx=5)
-    update_excel_btn = tk.Button(frame, text="Excel-Preise aktualisieren", width=18)
+    update_excel_btn = ctk.CTkButton(frame, text="Excel-Preise aktualisieren", width=180)
     update_excel_btn.pack(side="left", padx=5)
 
     use_online_var = tk.BooleanVar(value=True)
-    online_check = tk.Checkbutton(frame, text="Online Quellen nutzen",variable=use_online_var )
+    online_check = ctk.CTkCheckBox(frame, text="Online Quellen nutzen", variable=use_online_var, onvalue=True, offvalue=False)
     online_check.pack(side="left", padx=10)
 
-    result_frame = tk.Frame(root)
+    result_frame = ctk.CTkFrame(root)
     result_frame.pack(fill="both", expand=True, padx=10, pady=4)
 
     tree_scroll_y = tk.Scrollbar(result_frame, orient="vertical")
@@ -217,9 +222,9 @@ def start_app():
     tree.pack(fill="both", expand=True)
 
     progress_var = tk.DoubleVar()
-    progress_bar = ttk.Progressbar(root, variable=progress_var, maximum=100)
+    progress_bar = ctk.CTkProgressBar(root, variable=progress_var)
     progress_bar.pack(fill="x", padx=10, pady=2)
-    status_label = tk.Label(root, text="Bereit")
+    status_label = ctk.CTkLabel(root, text="Bereit")
     status_label.pack(fill="x", padx=10, pady=(0, 5))
 
     def on_tree_click(event):
@@ -240,8 +245,8 @@ def start_app():
         df_loaded = load_db_from_json(DB_JSON_FILE)
         if df_loaded is not None and all(col in df_loaded.columns for col in search_cols):
             df = df_loaded
-            search_btn.config(state="normal")
-            bom_btn.config(state="normal")
+            search_btn.configure(state="normal")
+            bom_btn.configure(state="normal")
         else:
             messagebox.showinfo(
                 "Keine Datenbank",
@@ -270,8 +275,8 @@ def start_app():
         df = df_loaded
         save_db_to_json(df, DB_JSON_FILE)
         df = load_db_from_json(DB_JSON_FILE)
-        search_btn.config(state="normal")
-        bom_btn.config(state="normal")
+        search_btn.configure(state="normal")
+        bom_btn.configure(state="normal")
         messagebox.showinfo("Erfolg", "Datenbank wurde aktualisiert und gespeichert.")
 
     def do_search(event=None):
@@ -388,12 +393,12 @@ def start_app():
             def update_progress(idx):
                 progress = (idx + 1) / total * 100
                 progress_var.set(progress)
-                status_label.config(text=f"Lade BOM: {idx + 1}/ {total} Teile werden verarbeitet ...")
+                status_label.configure(text=f"Lade BOM: {idx + 1}/ {total} Teile werden verarbeitet ...")
                 root.update_idletasks()
 
             progress_var.set(0)
             progress_bar.update()
-            status_label.config(text=f"Lade BOM: 0/ {total} Teile werden verarbeitet ...")
+            status_label.configure(text=f"Lade BOM: 0/ {total} Teile werden verarbeitet ...")
             root.update_idletasks()
 
             for idx, suchwert in enumerate(bauteile):
@@ -415,7 +420,7 @@ def start_app():
                 root.after(0, update_progress, idx)
 
             root.after(0, progress_var.set, 100)
-            root.after(0, status_label.config, {"text": "BOM-Laden abgeschlossen."})
+            root.after(0, status_label.configure, {"text": "BOM-Laden abgeschlossen."})
             root.after(0, progress_bar.update)
             root.after(0, root.update_idletasks)
 
@@ -451,12 +456,12 @@ def start_app():
         df_to_export.to_excel(fname, index=False)
         messagebox.showinfo("Export", f"Erfolgreich gespeichert:\n{fname}")
 
-    update_db_btn.config(command=update_db_from_excel)
-    search_btn.config(command=do_search)
+    update_db_btn.configure(command=update_db_from_excel)
+    search_btn.configure(command=do_search)
     entry.bind("<Return>", do_search)
-    bom_btn.config(command=load_bom_and_search)
-    export_btn.config(command=export_as_excel)
-    update_excel_btn.config(command=update_selected_prices_in_excel)
+    bom_btn.configure(command=load_bom_and_search)
+    export_btn.configure(command=export_as_excel)
+    update_excel_btn.configure(command=update_selected_prices_in_excel)
 
     initialize_db()
     root.mainloop()
