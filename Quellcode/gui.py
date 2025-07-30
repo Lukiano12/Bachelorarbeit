@@ -17,23 +17,27 @@ except ImportError:
 DB_JSON_FILE = "database.json"
 
 def show_table(df, tree, veraltet_indices=None):
+    # Spalten, die NICHT angezeigt werden sollen (aber im DataFrame bleiben!)
+    hide_cols = ["ENTRY", "Description_deutsch_2"]
     if veraltet_indices is None:
         veraltet_indices = []
     if "Status" in df.columns:
         df = df.drop(columns=["Status"])
-    df = df.replace({None: '', 'nan': '', float('nan'): ''}).fillna('')
-    df = df.loc[:, (df != '').any(axis=0)]
+    # Nur für die Anzeige ausblenden:
+    display_df = df[[col for col in df.columns if col not in hide_cols]]
+    display_df = display_df.replace({None: '', 'nan': '', float('nan'): ''}).fillna('')
+    display_df = display_df.loc[:, (display_df != '').any(axis=0)]
 
-    tree["columns"] = ["Auswahl"] + list(df.columns)
+    tree["columns"] = ["Auswahl"] + list(display_df.columns)
     tree.heading("Auswahl", text="✓")
     tree.column("Auswahl", width=40, anchor="center")
-    for col in df.columns:
+    for col in display_df.columns:
         tree.heading(col, text=str(col))
         tree.column(col, width=120, anchor="center")
     tree.delete(*tree.get_children())
     tree.tag_configure("veraltet", background="#ffcccc")
 
-    for idx, (_, row) in enumerate(df.iterrows()):
+    for idx, (_, row) in enumerate(display_df.iterrows()):
         values = [""]  # Auswahl immer leer setzen!
         for x in row:
             if isinstance(x, (pd.Timestamp, datetime)):
@@ -100,22 +104,29 @@ def update_excel_prices_win32com(excel_path, updates):
         return
     try:
         import win32com.client
+        print(f"[DEBUG] Starte Excel-Update für Datei: {excel_path}")
         excel = win32com.client.Dispatch("Excel.Application")
         excel.Visible = True
         wb = excel.Workbooks.Open(os.path.abspath(excel_path))
         ws = wb.Worksheets("DB_4erDS")
         ws.Unprotect("cpq6ve")
         max_row = ws.UsedRange.Rows.Count
+        print(f"[DEBUG] Maximale Zeile in Excel: {max_row}")
+        print(f"[DEBUG] Anzahl Updates: {len(updates)}")
 
-        for upd in updates:
+        for upd_idx, upd in enumerate(updates):
             suchnummer = str(upd.get("artikelnummer") or upd.get("1000ernummer")).strip().lower()
             price_block = upd['price_block']
             losgroesse = str(price_block[2]).strip()
             quelle = str(price_block[3]).strip().lower()
             gefunden = False
 
-            # [DEBUG] Update-Versuch
-            print(f"[DEBUG] UPDATE-VERSUCH: suchnummer={suchnummer}, losgroesse={losgroesse}, quelle={quelle}, price_block={price_block}")
+            print(f"[DEBUG] Update {upd_idx+1}/{len(updates)}: suchnummer={suchnummer}, losgroesse={losgroesse}, quelle={quelle}, price_block={price_block}")
+
+            # Prüfe, ob alle 4 Felder gefüllt sind
+            if not all(str(x).strip() not in ("", "nan", "None") for x in price_block):
+                print(f"[DEBUG] Unvollständiger Block wird übersprungen: {price_block}")
+                continue
 
             # Suche nach bestehendem Block mit gleicher Artikelnummer, Losgröße & Quelle
             for row in range(8, max_row + 1, 4):
@@ -123,44 +134,46 @@ def update_excel_prices_win32com(excel_path, updates):
                 zelle_1000er = str(ws.Cells(row, 3).Value).strip().lower()
                 alt_losgroesse = str(ws.Cells(row + 2, 24).Value).strip()
                 alt_quelle = str(ws.Cells(row + 3, 24).Value).strip().lower()
-                # [DEBUG] Vergleichswerte aus Excel
-                print(f"[DEBUG] EXCEL-ZEILE: row={row}, artikel={zelle_artikel}, 1000er={zelle_1000er}, alt_losgroesse={alt_losgroesse}, alt_quelle={alt_quelle}")
+                print(f"[DEBUG]   Prüfe Zeile {row}: artikel={zelle_artikel}, 1000er={zelle_1000er}, alt_losgroesse={alt_losgroesse}, alt_quelle={alt_quelle}")
 
                 if suchnummer in (zelle_artikel, zelle_1000er):
                     if normalize_losgroesse(alt_losgroesse) == normalize_losgroesse(losgroesse) and normalize(alt_quelle) == normalize(quelle):
-                        # Block existiert: Überschreiben und KEINEN neuen Block anlegen!
                         for i, value in enumerate(price_block):
+                            print(f"[DEBUG]     Schreibe Wert '{value}' in Zeile {row + i}, Spalte 24 (Überschreiben)")
                             ws.Cells(row + i, 24).Value = value
                         gefunden = True
-                        print(f"[DEBUG] -> Überschrieben! (row={row})")
+                        print(f"[DEBUG]   -> Überschrieben! (row={row})")
                         break
 
             if gefunden:
-                continue  # Wenn überschrieben, KEIN neuer Block anlegen!
+                continue
 
-            # Kein passender Block: Füge neuen Block am Ende an
+            # Kein passender Block: Füge neuen Block am Tabellenende an
+            letzte_zeile = None
             for row in range(8, max_row + 1, 4):
                 zelle_artikel = str(ws.Cells(row, 2).Value).strip().lower()
                 zelle_1000er = str(ws.Cells(row, 3).Value).strip().lower()
                 if suchnummer in (zelle_artikel, zelle_1000er):
-                    empty = True
-                    for i in range(4):
-                        val = ws.Cells(row + i, 24).Value
-                        if val is not None and str(val).strip().lower() not in ("", "none", "nan"):
-                            empty = False
-                            break
-                    if empty:
-                        for i, value in enumerate(price_block):
-                            ws.Cells(row + i, 24).Value = value
-                        print(f"[DEBUG] -> Neu angelegt! (row={row})")
-                        break
+                    letzte_zeile = row
+            if letzte_zeile is not None:
+                neue_zeile = letzte_zeile + 4
+            else:
+                neue_zeile = max_row + 1
+            print(f"[DEBUG]   Neuer Block für {suchnummer} ab Zeile {neue_zeile}")
+            for i, value in enumerate(price_block):
+                print(f"[DEBUG]     Schreibe Wert '{value}' in Zeile {neue_zeile + i}, Spalte 24 (Neuer Block)")
+                ws.Cells(neue_zeile + i, 24).Value = value
 
+        print("[DEBUG] Speichere Arbeitsmappe...")
+        wb.Save()
+        try:
+            print("[DEBUG] Starte Makro 'NewPricesInDB'...")
+            excel.Application.Run(f"'{wb.Name}'!NewPricesInDB")
             wb.Save()
-            try:
-                excel.Application.Run(f"'{wb.Name}'!NewPricesInDB")
-                wb.Save()
-            except Exception as e:
-                messagebox.showerror("Makro-Fehler", f"Makro konnte nicht ausgeführt werden:\n{e}")
+            print("[DEBUG] Makro erfolgreich ausgeführt und gespeichert.")
+        except Exception as e:
+            print(f"[ERROR] Makro-Fehler: {e}")
+            messagebox.showerror("Makro-Fehler", f"Makro konnte nicht ausgeführt werden:\n{e}")
 
         ws.Protect("cpq6ve", DrawingObjects=True, Contents=True, Scenarios=True, AllowFiltering=True)
         wb.Save()
@@ -176,10 +189,13 @@ def start_app():
     root.title("Preis-DB & Online-Preise")
     root.geometry("1600x900")
 
-    # Forest-Theme laden
-    style = ttk.Style()
-    root.tk.call("source", os.path.join("themes", "forest-light.tcl"))
-    style.theme_use("forest-light")
+    # Forest-Theme laden (optional, falls vorhanden)
+    try:
+        style = ttk.Style()
+        root.tk.call("source", os.path.join("themes", "forest-light.tcl"))
+        style.theme_use("forest-light")
+    except Exception as e:
+        print(f"[DEBUG] Konnte Forest-Theme nicht laden: {e}")
 
     df = None
     search_cols = ["WN_SAP-Artikel-NR", "WN_HerstellerBestellnummer_1"]
@@ -351,7 +367,6 @@ def start_app():
                 if all(str(x).strip() not in ("", "nan", "None") for x in price_block):
                     artikelnummer = str(block_rows.iloc[0][anzeige_df.columns[0]])
                     nummer_1000er = str(block_rows.iloc[0][anzeige_df.columns[1]]) if len(anzeige_df.columns) > 1 else ""
-                    # [DEBUG] Update wird vorbereitet
                     print(f"[DEBUG] PREPARE UPDATE: artikelnummer={artikelnummer}, 1000ernummer={nummer_1000er}, price_block={price_block}, quelle={col}")
                     updates.append({
                         'artikelnummer': artikelnummer,
@@ -359,6 +374,8 @@ def start_app():
                         'price_block': price_block,
                         'quelle': col
                     })
+                else:
+                    print(f"[DEBUG] Unvollständiger Block wird übersprungen (GUI): {price_block}")
         if not updates:
             messagebox.showinfo("No update", "Kein vollständiger und neuer Online-Block gefunden.")
             return
