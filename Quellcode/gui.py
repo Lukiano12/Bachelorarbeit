@@ -3,7 +3,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import threading
-from datetime import datetime
+from datetime import datetime, time
 from excel_search import load_excel, search_and_show, merge_results
 from online_sources import get_online_results
 from bom_tools import read_bom, detect_both_part_columns
@@ -139,9 +139,45 @@ def update_excel_prices_win32com(excel_path, updates, progress_var=None, status_
             key = (artikelnummer, nummer_1000er, losgroesse, quelle)
 
             row = excel_index.get(key)
+            def set_cell_value(cell, value):
+                # Versuche, Wert als float zu setzen, falls möglich
+                if isinstance(value, str):
+                    v = value.strip()
+                    # Versuche, als Datum zu setzen
+                    try:
+                        from dateutil.parser import parse
+                        dt = parse(v, dayfirst=True, fuzzy=True)
+                        if isinstance(dt, datetime):
+                            cell.Value = datetime(dt.year, dt.month, dt.day, 12, 0, 0)
+                        else:
+                            cell.Value = datetime(dt.year, dt.month, dt.day, 12, 0, 0)
+                            cell.NumberFormat = "DD.MM.YYYY"
+                        return
+                    except Exception:
+                        pass
+                    # Versuche, als float zu setzen
+                    try:
+                        cell.Value = float(v.replace(",", "."))
+                        return
+                    except Exception:
+                        pass
+                    # Sonst als String
+                    cell.Value = v
+                elif isinstance(value, (int, float)):
+                    cell.Value = value
+                elif value is None:
+                    cell.Value = ""
+                else:
+                    cell.Value = str(value).strip()
+
             if row:
                 for i, value in enumerate(price_block):
-                    ws.Cells(row + i, 24).Value = value
+                    if i == 0:
+                        # Nur das Datum speziell behandeln
+                        set_cell_value(ws.Cells(row + i, 24), value)
+                    else:
+                        # Alle anderen Werte 1:1 als String
+                        ws.Cells(row + i, 24).Value = str(value).strip()
             else:
                 # Falls kein passender Block existiert, neuen Block suchen/anhängen
                 for row_candidate in range(8, max_row + 1, 4):
@@ -156,7 +192,10 @@ def update_excel_prices_win32com(excel_path, updates, progress_var=None, status_
                                 break
                         if empty:
                             for i, value in enumerate(price_block):
-                                ws.Cells(row_candidate + i, 24).Value = value
+                                if i == 0:
+                                    set_cell_value(ws.Cells(row_candidate + i, 24), value)
+                                else:
+                                    ws.Cells(row_candidate + i, 24).Value = str(value).strip()
                             break
 
             # Fortschritt aktualisieren (immer im GUI-Thread)
@@ -357,6 +396,7 @@ def start_app():
         for item in selected_items:
             idx = int(tree.index(item))
             block_rows = anzeige_df.iloc[idx:idx+block_size]
+            found_update = False
             for col in anzeige_df.columns:
                 if not is_online_source(col):
                     continue
@@ -365,7 +405,6 @@ def start_app():
                     clean_price(block_rows.iloc[1][col]),
                     block_rows.iloc[2][col],
                     block_rows.iloc[3][col],
-                    
                 ]
                 if all(str(x).strip() not in ("", "nan", "None") for x in price_block):
                     artikelnummer = str(block_rows.iloc[0][anzeige_df.columns[0]])
@@ -377,7 +416,7 @@ def start_app():
                         'price_block': price_block,
                         'quelle': col
                     })
-                found_update = True
+                    found_update = True
             # Optional: Warnung, wenn für einen Block keine vollständigen Online-Spalten gefunden wurden
             if not found_update:
                 print(f"[WARN] Kein vollständiger Online-Block für Index {idx} gefunden.")
