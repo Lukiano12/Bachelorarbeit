@@ -7,9 +7,9 @@ from datetime import datetime, time
 from excel_search import load_excel, search_and_show, merge_results
 from online_sources import get_online_results
 from bom_tools import read_bom, detect_both_part_columns
+import win32com.client
 
 try:
-    import win32com.client
     HAS_WIN32 = True
 except ImportError:
     HAS_WIN32 = False
@@ -96,6 +96,18 @@ def normalize_losgroesse(val):
     except Exception:
         return str(val).strip().lower()
 
+def normalize_quelle(val):
+    # Nimmt nur den Namen vor der ersten Klammer und wandelt in Kleinbuchstaben um
+    v = str(val).strip().lower()
+    v = v.split("(")[0].strip()
+    return v
+
+def normalize_nummer_1000er(val):
+    try:
+        return str(int(float(str(val).replace(",", ".").strip())))
+    except Exception:
+        return str(val).strip().lower()
+
 def build_excel_index(ws, max_row):
     """
     Erzeugt ein Dictionary, das (artikelnummer, nummer_1000er, losgroesse, quelle) auf die Startzeile des Blocks abbildet.
@@ -103,9 +115,9 @@ def build_excel_index(ws, max_row):
     index = {}
     for row in range(8, max_row + 1, 4):
         artikelnummer = str(ws.Cells(row, 2).Value).strip().lower()
-        nummer_1000er = str(ws.Cells(row, 3).Value).strip().lower()
-        losgroesse = str(ws.Cells(row + 2, 24).Value).strip()
-        quelle = str(ws.Cells(row + 3, 24).Value).strip().lower()
+        nummer_1000er = normalize_nummer_1000er(ws.Cells(row, 3).Value)
+        losgroesse = normalize_losgroesse(ws.Cells(row + 2, 24).Value)
+        quelle = normalize_quelle(ws.Cells(row + 3, 24).Value)
         key = (artikelnummer, nummer_1000er, losgroesse, quelle)
         index[key] = row
     return index
@@ -118,7 +130,6 @@ def update_excel_prices_win32com(excel_path, updates, progress_var=None, status_
             messagebox.showerror("Error", "win32com.client ist nicht installiert. Kann Excel nicht automatisieren.")
         return
     try:
-        import win32com.client
         excel = win32com.client.Dispatch("Excel.Application")
         excel.Visible = True
         wb = excel.Workbooks.Open(os.path.abspath(excel_path))
@@ -132,11 +143,13 @@ def update_excel_prices_win32com(excel_path, updates, progress_var=None, status_
         total = len(updates)
         for idx, upd in enumerate(updates):
             artikelnummer = str(upd.get("artikelnummer", "")).strip().lower()
-            nummer_1000er = str(upd.get("1000ernummer", "")).strip().lower()
+            nummer_1000er = normalize_nummer_1000er(upd.get("1000ernummer", ""))
             price_block = upd['price_block']
-            losgroesse = str(price_block[2]).strip()
-            quelle = str(price_block[3]).strip().lower()
+            losgroesse = normalize_losgroesse(price_block[2])
+            quelle = normalize_quelle(price_block[3])
             key = (artikelnummer, nummer_1000er, losgroesse, quelle)
+            print(f"[DEBUG] Suche Key: {key}")
+            print(f"[DEBUG] Excel-Keys: {list(excel_index.keys())}")
 
             row = excel_index.get(key)
             def set_cell_value(cell, value):
@@ -172,17 +185,18 @@ def update_excel_prices_win32com(excel_path, updates, progress_var=None, status_
 
             if row:
                 for i, value in enumerate(price_block):
-                    if i == 0:
-                        # Nur das Datum speziell behandeln
-                        set_cell_value(ws.Cells(row + i, 24), value)
-                    else:
-                        # Alle anderen Werte 1:1 als String
-                        ws.Cells(row + i, 24).Value = str(value).strip()
+                    ws.Cells(row + i, 24).Value = str(value).strip()
+                # Nach jedem Eintrag Makro ausführen und speichern, damit Excel den Block verschiebt!
+                try:
+                    excel.Application.Run(f"'{wb.Name}'!NewPricesInDB")
+                except Exception as e:
+                    print(f"[WARN] Makro konnte nicht ausgeführt werden: {e}")
+                wb.Save()
             else:
                 # Falls kein passender Block existiert, neuen Block suchen/anhängen
                 for row_candidate in range(8, max_row + 1, 4):
                     zelle_artikel = str(ws.Cells(row_candidate, 2).Value).strip().lower()
-                    zelle_1000er = str(ws.Cells(row_candidate, 3).Value).strip().lower()
+                    zelle_1000er = normalize_nummer_1000er(ws.Cells(row_candidate, 3).Value)
                     if artikelnummer in (zelle_artikel, zelle_1000er):
                         empty = True
                         for i in range(4):
@@ -192,13 +206,14 @@ def update_excel_prices_win32com(excel_path, updates, progress_var=None, status_
                                 break
                         if empty:
                             for i, value in enumerate(price_block):
-                                if i == 0:
-                                    set_cell_value(ws.Cells(row_candidate + i, 24), value)
-                                else:
-                                    ws.Cells(row_candidate + i, 24).Value = str(value).strip()
+                                ws.Cells(row_candidate + i, 24).Value = str(value).strip()
+                            try:
+                                excel.Application.Run(f"'{wb.Name}'!NewPricesInDB")
+                            except Exception as e:
+                                print(f"[WARN] Makro konnte nicht ausgeführt werden: {e}")
+                            wb.Save()
                             break
 
-            # Fortschritt aktualisieren (immer im GUI-Thread)
             if progress_var and status_label and root:
                 def update_gui(idx=idx):
                     progress = (idx + 1) / total * 100
@@ -206,16 +221,6 @@ def update_excel_prices_win32com(excel_path, updates, progress_var=None, status_
                     status_label.config(text=f"Aktualisiere Preise: {idx + 1} / {total}")
                     root.update_idletasks()
                 root.after(0, update_gui)
-
-        wb.Save()
-        try:
-            excel.Application.Run(f"'{wb.Name}'!NewPricesInDB")
-            wb.Save()
-        except Exception as e:
-            if root:
-                root.after(0, messagebox.showerror, "Makro-Fehler", f"Makro konnte nicht ausgeführt werden:\n{e}")
-            else:
-                messagebox.showerror("Makro-Fehler", f"Makro konnte nicht ausgeführt werden:\n{e}")
 
         ws.Protect("cpq6ve", DrawingObjects=True, Contents=True, Scenarios=True, AllowFiltering=True)
         wb.Save()
@@ -396,7 +401,7 @@ def start_app():
         for item in selected_items:
             idx = int(tree.index(item))
             block_rows = anzeige_df.iloc[idx:idx+block_size]
-            found_update = False
+            found_any = False
             for col in anzeige_df.columns:
                 if not is_online_source(col):
                     continue
@@ -409,16 +414,14 @@ def start_app():
                 if all(str(x).strip() not in ("", "nan", "None") for x in price_block):
                     artikelnummer = str(block_rows.iloc[0][anzeige_df.columns[0]])
                     nummer_1000er = str(block_rows.iloc[0][anzeige_df.columns[1]]) if len(anzeige_df.columns) > 1 else ""
-                    print(f"[DEBUG] PREPARE UPDATE: artikelnummer={artikelnummer}, 1000ernummer={nummer_1000er}, price_block={price_block}, quelle={col}")
                     updates.append({
                         'artikelnummer': artikelnummer,
                         '1000ernummer': nummer_1000er,
                         'price_block': price_block,
                         'quelle': col
                     })
-                    found_update = True
-            # Optional: Warnung, wenn für einen Block keine vollständigen Online-Spalten gefunden wurden
-            if not found_update:
+                    found_any = True
+            if not found_any:
                 print(f"[WARN] Kein vollständiger Online-Block für Index {idx} gefunden.")
 
         if not updates:
@@ -427,7 +430,6 @@ def start_app():
 
         print(f"[DEBUG] Anzahl Updates, die an Excel übergeben werden: {len(updates)}")
 
-        # Fortschrittsbalken und Statuslabel sichtbar machen und in Thread ausführen
         progress_var.set(0)
         progress_bar.update()
         status_label.config(text="Starte Preis-Update ...")
@@ -495,7 +497,9 @@ def start_app():
             root.after(0, progress_var.set, 100)
             root.after(0, status_label.config, {"text": "BOM-Laden abgeschlossen."})
             root.after(0, progress_bar.update)
-            root.after(0, root.update_idletasks)
+            root.after(0, root.update_idletasks()
+
+            )
 
             if not gesamt_ergebnisse:
                 root.after(0, messagebox.showinfo, "Info", "Keine Ergebnisse für die BOM-Bauteile.")
