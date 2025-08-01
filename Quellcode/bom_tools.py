@@ -1,3 +1,5 @@
+# Dieses Modul enthält Funktionen zum Lesen und Verarbeiten von Stücklistendateien (BOMs).
+
 import pandas as pd
 
 def read_bom(bomfile, header=6):

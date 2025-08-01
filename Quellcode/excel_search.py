@@ -1,3 +1,5 @@
+# Dieses Modul ist für das Laden, Durchsuchen und Zusammenführen von Daten aus der Haupt-Excel-Datenbank zuständig.
+
 import pandas as pd
 from utils import format_value, sapnr_to_str
 from datetime import datetime, timedelta
