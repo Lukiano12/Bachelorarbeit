@@ -3,8 +3,12 @@ import re
 
 def format_value(value, field=None):
     if field and "Datum" in field and pd.notna(value) and str(value).strip() != "":
+        # Wenn der Wert bereits ein korrekt formatierter String ist, direkt zurückgeben.
+        if isinstance(value, str) and re.match(r"^\d{2}\.\d{2}\.\d{4}$", value):
+            return value
         try:
-            date_val = pd.to_datetime(value, errors="coerce")
+            # KORREKTUR: dayfirst=True hinzugefügt, um die korrekte Reihenfolge zu erzwingen.
+            date_val = pd.to_datetime(value, dayfirst=True, errors="coerce")
             if pd.notna(date_val):
                 return date_val.strftime("%d.%m.%Y")
             else:
